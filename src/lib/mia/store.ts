@@ -1,4 +1,3 @@
-import "server-only";
 import { supabase } from "./supabaseClient.js";
 import { hashPhone } from "./phoneHash.js";
 
