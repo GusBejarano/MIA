@@ -33,7 +33,7 @@ function getPosition(): Promise<GeolocationPosition> {
     }
     navigator.geolocation.getCurrentPosition(resolve, reject, {
       enableHighAccuracy: false,
-      timeout: 8000,
+      timeout: 15000,
       maximumAge: 60000,
     });
   });
@@ -122,7 +122,12 @@ export default function MiaChat() {
           pos.coords.latitude,
           pos.coords.longitude
         );
-      } catch {
+      } catch (err) {
+        // GeolocationPositionError: 1 = permiso denegado, 2 = posicion no
+        // disponible, 3 = timeout. Tambien falla aqui (sin popup real) si
+        // el origen no es seguro (HTTPS o localhost) - los navegadores
+        // bloquean geolocalizacion en HTTP salvo en localhost.
+        console.error("Geolocalizacion fallo:", err);
         granted = false;
       }
     }
