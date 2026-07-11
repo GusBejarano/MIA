@@ -1,6 +1,6 @@
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { OnboardingSession } from "../src/lib/mia/onboarding.js";
+import { OnboardingSession } from "../src/lib/mia/onboarding";
 
 const rl = readline.createInterface({ input: stdin, output: stdout });
 
@@ -43,8 +43,8 @@ async function main() {
   const permReplyText = simulatedPermission ? "Sí, dale." : "Prefiero no compartirla.";
   console.log(`Tú (auto): ${permReplyText}`);
   let reply = await session.handleUserMessage(permReplyText, {
-    simulatedPermission,
-    simulatedGeoCity,
+    locationPermissionGranted: simulatedPermission,
+    detectedCity: simulatedGeoCity,
   });
   console.log(`\nMIA: ${reply}\n`);
 

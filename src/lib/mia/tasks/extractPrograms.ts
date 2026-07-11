@@ -1,4 +1,4 @@
-import { miaTask } from "../claudeClient.js";
+import { miaTask } from "../claudeClient";
 
 const KNOWN_PROGRAMS = [
   "Comfandi",

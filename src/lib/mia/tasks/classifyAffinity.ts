@@ -1,4 +1,4 @@
-import { miaTask } from "../claudeClient.js";
+import { miaTask } from "../claudeClient";
 
 const CATEGORIES = ["comida", "viajes", "entretenimiento", "salud"] as const;
 export type AffinityCategory = (typeof CATEGORIES)[number];

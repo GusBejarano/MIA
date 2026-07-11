@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { MIA_SYSTEM_PROMPT } from "./systemPrompt.js";
+import { MIA_SYSTEM_PROMPT } from "./systemPrompt";
 
 const apiKey = process.env.ANTHROPIC_API_KEY;
 if (!apiKey) {

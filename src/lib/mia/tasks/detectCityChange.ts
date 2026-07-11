@@ -1,4 +1,4 @@
-import { miaTask } from "../claudeClient.js";
+import { miaTask } from "../claudeClient";
 
 /**
  * Detecta si un mensaje libre del usuario indica que esta en una ciudad

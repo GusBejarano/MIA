@@ -1,10 +1,10 @@
-import { miaConversation, type ChatMessage } from "./claudeClient.js";
+import { miaConversation, type ChatMessage } from "./claudeClient";
 import {
   classifyAffinity,
   type AffinityCategory,
-} from "./tasks/classifyAffinity.js";
-import { extractPrograms } from "./tasks/extractPrograms.js";
-import { rankBenefits } from "./tasks/rankBenefits.js";
+} from "./tasks/classifyAffinity";
+import { extractPrograms } from "./tasks/extractPrograms";
+import { rankBenefits } from "./tasks/rankBenefits";
 import {
   getOrCreateUserId,
   saveCity,
@@ -12,7 +12,7 @@ import {
   saveAffinity,
   savePrograms,
   saveExposure,
-} from "./store.js";
+} from "./store";
 
 const SUPPORTED_CITIES = ["Cali"]; // MVP: crece con el tiempo, hoy solo Cali
 
@@ -36,7 +36,11 @@ export class OnboardingSession {
   stage: Stage = "location_permission";
   profile: Profile = {};
 
-  private userId?: string;
+  // Publico (no private) para que las rutas de API puedan restaurar una
+  // sesion entre requests sin reconstruir la clase: el backend es stateless
+  // (Netlify Functions), asi que el estado completo (history/stage/profile/
+  // userId) viaja de ida y vuelta con el cliente entre turnos.
+  userId?: string;
 
   /**
    * `phone` identifica al usuario entre visitas (viene del webhook de
@@ -49,6 +53,11 @@ export class OnboardingSession {
   async start(): Promise<string> {
     this.userId = await getOrCreateUserId(this.phone);
 
+    // La API de Claude exige al menos un mensaje en `messages` - el arranque
+    // no tiene un turno de usuario todavia, asi que sembramos uno sintetico
+    // que representa "el usuario abrio el chat".
+    this.history.push({ role: "user", content: "Hola" });
+
     const reply = await miaConversation(
       this.history,
       `Este es el inicio de la conversacion con un usuario nuevo. Da la bienvenida
@@ -60,14 +69,13 @@ mostrar descuentos cercanos y que no se guarda.`
   }
 
   /**
-   * Procesa el turno del usuario segun el estado actual. `simulatedPermission`
-   * solo aplica en el estado location_permission (viene del harness de prueba,
-   * no de un mensaje de chat, porque en la vida real es un evento del navegador,
-   * no texto).
+   * Procesa el turno del usuario segun el estado actual. `locationPermissionGranted`
+   * y `detectedCity` solo aplican en el estado location_permission - vienen del
+   * evento real de geolocalizacion del navegador, no de un mensaje de chat.
    */
   async handleUserMessage(
     userMessage: string,
-    opts: { simulatedPermission?: boolean; simulatedGeoCity?: string } = {}
+    opts: { locationPermissionGranted?: boolean; detectedCity?: string } = {}
   ): Promise<string> {
     this.history.push({ role: "user", content: userMessage });
 
@@ -88,11 +96,11 @@ mostrar descuentos cercanos y que no se guarda.`
   }
 
   private async resolveLocationPermission(opts: {
-    simulatedPermission?: boolean;
-    simulatedGeoCity?: string;
+    locationPermissionGranted?: boolean;
+    detectedCity?: string;
   }): Promise<string> {
-    if (opts.simulatedPermission) {
-      const city = opts.simulatedGeoCity ?? "Cali";
+    if (opts.locationPermissionGranted) {
+      const city = opts.detectedCity ?? "Cali";
       const supported = SUPPORTED_CITIES.includes(city);
       await saveCity(this.userId!, city, "geolocation");
       this.profile.city = city;

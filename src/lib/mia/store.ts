@@ -1,5 +1,5 @@
-import { supabase } from "./supabaseClient.js";
-import { hashPhone } from "./phoneHash.js";
+import { supabase } from "./supabaseClient";
+import { hashPhone } from "./phoneHash";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

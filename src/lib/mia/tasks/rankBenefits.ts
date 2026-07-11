@@ -1,6 +1,6 @@
-import { MOCK_BENEFITS, type Benefit } from "../mockBenefits.js";
-import type { AffinityCategory } from "./classifyAffinity.js";
-import { miaTask } from "../claudeClient.js";
+import { MOCK_BENEFITS, type Benefit } from "../mockBenefits";
+import type { AffinityCategory } from "./classifyAffinity";
+import { miaTask } from "../claudeClient";
 
 export type Recommendation = {
   benefit: Benefit;
