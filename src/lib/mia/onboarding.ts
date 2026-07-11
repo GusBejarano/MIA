@@ -6,12 +6,13 @@ import {
 import { extractPrograms } from "./tasks/extractPrograms.js";
 import { rankBenefits } from "./tasks/rankBenefits.js";
 import {
+  getOrCreateUserId,
   saveCity,
   saveCityInterest,
   saveAffinity,
   savePrograms,
   saveExposure,
-} from "./mockStore.js";
+} from "./store.js";
 
 const SUPPORTED_CITIES = ["Cali"]; // MVP: crece con el tiempo, hoy solo Cali
 
@@ -35,8 +36,19 @@ export class OnboardingSession {
   stage: Stage = "location_permission";
   profile: Profile = {};
 
-  /** Arranca la conversacion: MIA pide el permiso de ubicacion. */
+  private userId?: string;
+
+  /**
+   * `phone` identifica al usuario entre visitas (viene del webhook de
+   * WhatsApp o de la sesion web autenticada por telefono) - nunca se
+   * guarda en texto plano, solo su hash (ver phoneHash.ts).
+   */
+  constructor(private readonly phone: string) {}
+
+  /** Arranca la conversacion: resuelve/crea el usuario y MIA pide el permiso de ubicacion. */
   async start(): Promise<string> {
+    this.userId = await getOrCreateUserId(this.phone);
+
     const reply = await miaConversation(
       this.history,
       `Este es el inicio de la conversacion con un usuario nuevo. Da la bienvenida
@@ -82,10 +94,10 @@ mostrar descuentos cercanos y que no se guarda.`
     if (opts.simulatedPermission) {
       const city = opts.simulatedGeoCity ?? "Cali";
       const supported = SUPPORTED_CITIES.includes(city);
-      saveCity(city, "geolocation");
+      await saveCity(this.userId!, city, "geolocation");
       this.profile.city = city;
 
-      if (!supported) saveCityInterest(city);
+      if (!supported) await saveCityInterest(this.userId!, city);
 
       const instruction = supported
         ? `El usuario concedio el permiso de ubicacion. Se detecto que esta en ${city}, que si tiene cobertura. Afirma la ciudad (no preguntes) y anuncia que hay descuentos disponibles hoy. Luego continua con la siguiente pregunta: que tipo de plan le interesa mas (comer bien, viajar, entretenimiento, salud y bienestar), como pregunta abierta.`
@@ -118,7 +130,7 @@ mostrar descuentos cercanos y que no se guarda.`
     }
 
     const city = SUPPORTED_CITIES[0];
-    saveCity(city, "manual");
+    await saveCity(this.userId!, city, "manual");
     this.profile.city = city;
     this.stage = "affinity";
     return this.emit(
@@ -128,7 +140,7 @@ mostrar descuentos cercanos y que no se guarda.`
 
   private async resolveCityText(userMessage: string): Promise<string> {
     const city = userMessage.trim();
-    saveCityInterest(city);
+    await saveCityInterest(this.userId!, city);
     this.stage = "affinity";
     return this.emit(
       `El usuario declaro que esta en ${city}, ciudad sin cobertura todavia. Confirma que vas a investigar que hay disponible ahi y que le avisaras. Luego continua con la siguiente pregunta: que tipo de plan le interesa mas (comer bien, viajar, entretenimiento, salud y bienestar), como pregunta abierta.`
@@ -137,7 +149,7 @@ mostrar descuentos cercanos y que no se guarda.`
 
   private async resolveAffinity(userMessage: string): Promise<string> {
     const category = await classifyAffinity(userMessage);
-    saveAffinity(category);
+    await saveAffinity(this.userId!, category);
     this.profile.affinity = category;
     this.stage = "programs";
     return this.emit(
@@ -147,7 +159,7 @@ mostrar descuentos cercanos y que no se guarda.`
 
   private async resolvePrograms(userMessage: string): Promise<string> {
     const programs = await extractPrograms(userMessage);
-    savePrograms(programs);
+    await savePrograms(this.userId!, programs);
     this.profile.programs = programs;
     this.stage = "reveal";
 
@@ -165,7 +177,9 @@ mostrar descuentos cercanos y que no se guarda.`
       programs: this.profile.programs ?? [],
     });
 
-    recommendations.forEach((r) => saveExposure(r.benefit.id));
+    for (const r of recommendations) {
+      await saveExposure(this.userId!, r.benefit.id);
+    }
 
     const listado = recommendations
       .map(

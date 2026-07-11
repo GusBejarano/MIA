@@ -19,8 +19,10 @@ src/
     claudeClient.ts      -> wrapper de la Claude API (Sonnet + Haiku)
     onboarding.ts         -> máquina de estados del guion completo
     mockBenefits.ts       -> catálogo de prueba (10 beneficios en Cali)
-    mockStore.ts          -> simula el guardado en Supabase (solo console.log,
-                              se reemplaza por el cliente real cuando se conecte)
+    supabaseClient.ts      -> cliente Supabase server-only (service_role key)
+    phoneHash.ts            -> hashea el teléfono del usuario con BEDI_HASH_SALT
+    store.ts                 -> persistencia real en Supabase (users, affinities,
+                                 user_programs, benefit_exposures, events)
     tasks/
       classifyAffinity.ts  -> Haiku: clasifica la Pregunta 2
       extractPrograms.ts   -> Haiku: extrae la Pregunta 3
@@ -38,7 +40,7 @@ npm install
 cp .env.example .env.local
 ```
 
-Abre `.env.local` y pega la key del workspace "MIA by Descuentos Inteligentes" en `ANTHROPIC_API_KEY`, y las credenciales del proyecto de Supabase. Los modelos ya vienen con los defaults correctos (Sonnet 5, Haiku 4.5).
+Abre `.env.local` y pega la key del workspace "MIA by Descuentos Inteligentes" en `ANTHROPIC_API_KEY`, el `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` del proyecto de Supabase, y el `BEDI_HASH_SALT` compartido. Los modelos ya vienen con los defaults correctos (Sonnet 5, Haiku 4.5).
 
 ```bash
 npm run dev
@@ -52,7 +54,7 @@ Abre [http://localhost:3000](http://localhost:3000).
 npm run chat
 ```
 
-Vas a ver primero unas preguntas marcadas `[SIMULACION]` — esas son del arnés de prueba, simulan lo que haría el navegador (si el usuario concede el permiso de ubicación y qué ciudad detectaría el geolocalizador). No son mensajes de MIA. Después de eso, la conversación real con MIA empieza.
+Primero te va a pedir un número de teléfono de prueba — identifica al usuario en Supabase (`users.phone_hash`), igual que haría el número de WhatsApp en producción. Después vas a ver preguntas marcadas `[SIMULACION]` — esas son del arnés de prueba, simulan lo que haría el navegador (si el usuario concede el permiso de ubicación y qué ciudad detectaría el geolocalizador). No son mensajes de MIA. Después de eso, la conversación real con MIA empieza y ya escribe en Supabase de verdad.
 
 Prueba estos escenarios para cubrir el guion completo:
 
@@ -65,10 +67,9 @@ Escribe `salir` para terminar y ver el perfil capturado en esa sesión.
 
 ## Qué falta conectar
 
-- `src/lib/mia/mockStore.ts` todavía solo imprime en consola — falta reemplazarlo por el cliente real de Supabase (`service_role` key) sin tocar `onboarding.ts`.
-- `src/lib/mia/mockBenefits.ts` usa 10 beneficios de ejemplo en Cali — falta el catálogo real.
-- Falta exponer `onboarding.ts` a través de rutas de API del chat web (`src/app/api/...`) para reemplazar `scripts/mia-cli.ts` como punto de entrada de producción.
+- `src/lib/mia/mockBenefits.ts` usa 10 beneficios de ejemplo en Cali — falta el catálogo real (Fase 3). Hasta que exista, `store.ts` ignora en silencio las exposiciones de beneficios mock (sus ids no son UUID válidos para `benefit_exposures`).
+- Falta exponer `onboarding.ts` a través de rutas de API del chat web (`src/app/api/...`) para reemplazar `scripts/mia-cli.ts` como punto de entrada de producción — ahí es donde `OnboardingSession` recibirá el teléfono real (webhook de WhatsApp o sesión web autenticada).
 
 ## Deploy
 
-El proyecto incluye `netlify.toml` con `@netlify/plugin-nextjs`. Configura las variables de entorno (`ANTHROPIC_API_KEY`, `MIA_MODEL_SONNET`, `MIA_MODEL_HAIKU`, `BEDI_HASH_SALT`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) en el dashboard de Netlify (Site settings → Environment variables) antes del primer deploy.
+El proyecto incluye `netlify.toml` con `@netlify/plugin-nextjs`. Configura las variables de entorno (`ANTHROPIC_API_KEY`, `MIA_MODEL_SONNET`, `MIA_MODEL_HAIKU`, `BEDI_HASH_SALT`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) en el dashboard de Netlify (Site settings → Environment variables) antes del primer deploy.

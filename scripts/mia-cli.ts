@@ -15,6 +15,10 @@ async function main() {
   );
   console.log("no son mensajes de MIA. Los mensajes reales de MIA salen despues.\n");
 
+  const phone = await ask(
+    "[SIMULACION] Numero de telefono de prueba (identifica al usuario en Supabase, ej. +573001234567): "
+  );
+
   const permAnswer = await ask(
     "[SIMULACION] ¿El usuario va a conceder el permiso de ubicacion cuando MIA lo pida? (s/n): "
   );
@@ -27,7 +31,7 @@ async function main() {
     );
   }
 
-  const session = new OnboardingSession();
+  const session = new OnboardingSession(phone);
 
   const firstMessage = await session.start();
   console.log(`\nMIA: ${firstMessage}\n`);
