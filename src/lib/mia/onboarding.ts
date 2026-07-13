@@ -5,6 +5,7 @@ import {
 } from "./tasks/classifyAffinity";
 import { extractPrograms } from "./tasks/extractPrograms";
 import { rankBenefits } from "./tasks/rankBenefits";
+import { detectBenefitRequest } from "./tasks/detectBenefitRequest";
 import {
   getOrCreateUserId,
   saveCity,
@@ -210,10 +211,48 @@ mostrar descuentos cercanos y que no se guarda.`
   }
 
   private async freeChat(userMessage: string): Promise<string> {
-    return this.emit(
-      `El usuario ya completo el onboarding y esta en conversacion libre. Respondele de forma natural segun el mensaje: "${userMessage}". No repitas las preguntas de onboarding.
+    const detection = await detectBenefitRequest(userMessage);
 
-Importante: en este turno NO tienes datos nuevos de beneficios reales (las 3 recomendaciones ya se las diste antes). No inventes, nombres ni menciones ningun comercio, marca o descuento nuevo, aunque el usuario pregunte por algo especifico (ej. un restaurante o categoria puntual) - si pregunta por algo que no tienes, dile con naturalidad que por ahora no tienes eso pero que le avisas apenas lo tengas. No completes con conocimiento general sobre negocios reales.`
+    if (!detection.isRequest) {
+      return this.emit(
+        `El usuario ya completo el onboarding y esta en conversacion libre. Respondele de forma natural segun el mensaje: "${userMessage}". No repitas las preguntas de onboarding.
+
+Importante: en este turno NO tienes datos nuevos de beneficios reales. No inventes, nombres ni menciones ningun comercio, marca o descuento nuevo. No completes con conocimiento general sobre negocios reales.`
+      );
+    }
+
+    if (!SUPPORTED_CITIES.includes(this.profile.city ?? "")) {
+      return this.emit(
+        `El usuario esta pidiendo beneficios, pero su ciudad (${this.profile.city}) todavia no tiene beneficios cargados. Dile con naturalidad y respeto que por ahora no tienes nada ahi, sin inventar, y confirma que le avisaras apenas haya algo.`
+      );
+    }
+
+    const affinity = detection.affinity ?? this.profile.affinity!;
+    const recommendations = await rankBenefits({
+      userId: this.userId!,
+      city: this.profile.city!,
+      affinity,
+    });
+
+    for (const r of recommendations) {
+      await saveExposure(this.userId!, r.benefit.id);
+    }
+
+    if (recommendations.length === 0) {
+      return this.emit(
+        `El usuario esta pidiendo beneficios (respondiendo a: "${userMessage}"), pero no hay ninguno real disponible que aplique para "${affinity}" con su ciudad y programas declarados. Dile con naturalidad y respeto que por ahora no tienes algo asi, sin inventar ni forzar una recomendacion, y confirma que le avisaras apenas haya algo.`
+      );
+    }
+
+    const listado = recommendations
+      .map((r, i) => {
+        const tag = r.alreadyShown ? "[ya se lo mostraste antes]" : "[nuevo]";
+        return `${i + 1}. ${r.benefit.title} (${r.benefit.sourceProgram}) ${tag} - ${r.reason}`;
+      })
+      .join("\n");
+
+    return this.emit(
+      `El usuario esta pidiendo beneficios en conversacion libre (mensaje: "${userMessage}"). Aqui tienes ${recommendations.length} opciones reales seleccionadas para "${affinity}":\n${listado}\n\nPresentalas en tu propio tono, respetando la razon de cada una. Si alguna esta marcada [ya se lo mostraste antes], menciona con naturalidad que sigue siendo una buena opcion para el - no la escondas ni finjas que es nueva. No inventes ninguna adicional.`
     );
   }
 

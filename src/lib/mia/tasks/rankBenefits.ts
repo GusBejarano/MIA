@@ -12,6 +12,7 @@ export type RankedBenefit = {
 export type Recommendation = {
   benefit: RankedBenefit;
   reason: string;
+  alreadyShown: boolean;
 };
 
 type BenefitRow = {
@@ -49,6 +50,15 @@ function cityMatches(dbCity: string, userCity: string): boolean {
  * disponibles. No se filtra por `access_type` (categoria A/B/C de Comfandi)
  * porque el onboarding todavia no le pregunta esa categoria al usuario -
  * cualquier beneficio del programa que declaro tener es elegible por ahora.
+ *
+ * Lo ya mostrado (benefit_exposures) NO se excluye - se usa como prioridad,
+ * no como filtro duro. Orden de relleno hasta completar 3:
+ *   1. nuevo + calza la afinidad
+ *   2. nuevo + no calza la afinidad (pero si ciudad/programa)
+ *   3. ya mostrado + calza la afinidad
+ *   4. ya mostrado + no calza la afinidad
+ * Si solo hay 1-2 beneficios elegibles en total, se repiten antes que dejar
+ * al usuario sin respuesta - "sin alternativas" es peor que repetir.
  */
 export async function rankBenefits(params: {
   userId: string;
@@ -82,18 +92,19 @@ export async function rankBenefits(params: {
 
   const exposedIds = new Set(await getExposedBenefitIds(userId));
 
-  const candidates = ((benefitRows ?? []) as BenefitRow[])
-    .filter((b) => !exposedIds.has(b.id))
-    .filter((b) => cityMatches(b.city, city));
+  const candidates = ((benefitRows ?? []) as BenefitRow[]).filter((b) =>
+    cityMatches(b.city, city)
+  );
 
-  // Si la afinidad exacta no da suficientes resultados, se completa con el
-  // resto de candidatos elegibles (mismo criterio de ciudad + programa +
-  // sin exponer antes), para no dejar al usuario con menos de 3 si hay mas
-  // disponibles.
-  const eligible = candidates.filter((b) => categoryMatchesAffinity(b.category, affinity));
-  const fallbackPool = candidates.filter((b) => !eligible.includes(b));
+  const isNew = (b: BenefitRow) => !exposedIds.has(b.id);
+  const matchesAffinity = (b: BenefitRow) => categoryMatchesAffinity(b.category, affinity);
 
-  const top3 = [...eligible, ...fallbackPool].slice(0, 3);
+  const tier1 = candidates.filter((b) => isNew(b) && matchesAffinity(b));
+  const tier2 = candidates.filter((b) => isNew(b) && !matchesAffinity(b));
+  const tier3 = candidates.filter((b) => !isNew(b) && matchesAffinity(b));
+  const tier4 = candidates.filter((b) => !isNew(b) && !matchesAffinity(b));
+
+  const top3 = [...tier1, ...tier2, ...tier3, ...tier4].slice(0, 3);
 
   const recommendations: Recommendation[] = [];
   for (const row of top3) {
@@ -103,7 +114,7 @@ export async function rankBenefits(params: {
       sourceProgram: programNameById.get(row.source_program_id) ?? "",
     };
     const reason = await writeReason(benefit, affinity);
-    recommendations.push({ benefit, reason });
+    recommendations.push({ benefit, reason, alreadyShown: exposedIds.has(row.id) });
   }
   return recommendations;
 }
