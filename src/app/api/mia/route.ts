@@ -5,6 +5,7 @@ import {
   type Stage,
 } from "@/lib/mia/onboarding";
 import type { ChatMessage } from "@/lib/mia/claudeClient";
+import type { UiMessage } from "@/lib/mia/uiMessages";
 
 // Backend stateless (Netlify Functions no conservan memoria entre
 // invocaciones): el estado completo de la sesion viaja de ida y vuelta
@@ -22,6 +23,8 @@ type RequestBody = {
   state?: ClientState;
   locationPermissionGranted?: boolean;
   detectedCity?: string;
+  chipSelection?: string[];
+  viewDetailId?: string;
 };
 
 export async function POST(req: NextRequest) {
@@ -32,8 +35,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "JSON invalido" }, { status: 400 });
   }
 
-  const { phone, message, state, locationPermissionGranted, detectedCity } =
-    body;
+  const {
+    phone,
+    message,
+    state,
+    locationPermissionGranted,
+    detectedCity,
+    chipSelection,
+    viewDetailId,
+  } = body;
 
   if (!phone || typeof phone !== "string") {
     return NextResponse.json(
@@ -46,6 +56,7 @@ export async function POST(req: NextRequest) {
 
   try {
     let reply: string;
+    let ui: UiMessage[] = [];
 
     if (!state) {
       reply = await session.start();
@@ -55,10 +66,14 @@ export async function POST(req: NextRequest) {
       session.profile = state.profile;
       session.userId = state.userId;
 
-      reply = await session.handleUserMessage(message ?? "", {
+      const turn = await session.handleUserMessage(message ?? "", {
         locationPermissionGranted,
         detectedCity,
+        chipSelection,
+        viewDetailId,
       });
+      reply = turn.reply;
+      ui = turn.ui;
     }
 
     const nextState: ClientState = {
@@ -68,7 +83,7 @@ export async function POST(req: NextRequest) {
       userId: session.userId,
     };
 
-    return NextResponse.json({ reply, state: nextState });
+    return NextResponse.json({ reply, ui, state: nextState });
   } catch (err) {
     console.error("Error en /api/mia:", err);
     return NextResponse.json(

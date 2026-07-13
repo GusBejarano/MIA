@@ -1,11 +1,45 @@
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { OnboardingSession } from "../src/lib/mia/onboarding";
+import type { UiMessage } from "../src/lib/mia/uiMessages";
 
 const rl = readline.createInterface({ input: stdin, output: stdout });
 
 async function ask(question: string): Promise<string> {
   return (await rl.question(question)).trim();
+}
+
+function printUi(ui: UiMessage[]) {
+  // El CLI es solo un arnes de prueba por texto - no dibuja chips/carruseles
+  // de verdad, pero imprime lo suficiente para responder por texto libre
+  // (allowFreeText siempre esta activo en el contrato real).
+  for (const block of ui) {
+    switch (block.type) {
+      case "chip_select":
+        console.log(
+          `  [chips${block.multi ? ` - hasta ${block.maxSelect ?? "varios"}` : " - una sola"}]`,
+          block.options.map((o) => `${o.label} (${o.count})`).join(", ")
+        );
+        break;
+      case "summary_cards":
+        console.log(
+          "  [resumen]",
+          block.cards.map((c) => `${c.title}: ${c.count}`).join(", ")
+        );
+        break;
+      case "card_carousel":
+        console.log(
+          "  [carrusel]",
+          block.cards.map((c) => `${c.title} [${c.tag}]`).join(" | ")
+        );
+        break;
+      case "detail_sheet":
+        console.log(`  [detalle] ${block.title} (${block.tag})`);
+        console.log(`  ${block.description}`);
+        for (const d of block.details) console.log(`  ${d.label}: ${d.value}`);
+        break;
+    }
+  }
 }
 
 async function main() {
@@ -14,6 +48,10 @@ async function main() {
     "Estas preguntas de aqui abajo son del ARNES DE PRUEBA (simulan al navegador),"
   );
   console.log("no son mensajes de MIA. Los mensajes reales de MIA salen despues.\n");
+  console.log(
+    "Nota: este CLI no dibuja chips ni carruseles de verdad - los imprime como texto.\n" +
+      "Responde escribiendo el nombre/categoria tal cual aparece entre parentesis.\n"
+  );
 
   const phone = await ask(
     "[SIMULACION] Numero de telefono de prueba (identifica al usuario en Supabase, ej. +573001234567): "
@@ -36,26 +74,22 @@ async function main() {
   const firstMessage = await session.start();
   console.log(`\nMIA: ${firstMessage}\n`);
 
-  // El primer turno del usuario responde a la pregunta de permiso. En este
-  // punto no importa mucho el texto (el permiso ya se decidio arriba, es un
-  // evento de navegador, no de chat), pero mantenemos el flujo conversacional
-  // natural pidiendo que el usuario "responda" para no romper el historial.
   const permReplyText = simulatedPermission ? "Sí, dale." : "Prefiero no compartirla.";
   console.log(`Tú (auto): ${permReplyText}`);
-  let reply = await session.handleUserMessage(permReplyText, {
+  let turn = await session.handleUserMessage(permReplyText, {
     locationPermissionGranted: simulatedPermission,
     detectedCity: simulatedGeoCity,
   });
-  console.log(`\nMIA: ${reply}\n`);
+  console.log(`\nMIA: ${turn.reply}\n`);
+  printUi(turn.ui);
 
-  // A partir de aqui, conversacion libre por consola hasta que el usuario
-  // escriba "salir".
   while (true) {
-    const userMessage = await ask("Tú: ");
+    const userMessage = await ask("\nTú: ");
     if (userMessage.toLowerCase() === "salir") break;
 
-    reply = await session.handleUserMessage(userMessage);
-    console.log(`\nMIA: ${reply}\n`);
+    turn = await session.handleUserMessage(userMessage);
+    console.log(`\nMIA: ${turn.reply}\n`);
+    printUi(turn.ui);
   }
 
   console.log("\nPerfil capturado en esta sesion:", session.profile);

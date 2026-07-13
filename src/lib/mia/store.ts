@@ -81,24 +81,14 @@ export async function saveAffinity(userId: string, category: string) {
   }
 }
 
-export async function savePrograms(userId: string, programs: string[]) {
-  if (programs.length === 0) return;
+/** Guarda los benefactores (programas) que el usuario eligio, ya como ids reales. */
+export async function saveProgramSelections(userId: string, programIds: string[]) {
+  if (programIds.length === 0) return;
 
-  const { data: matchedPrograms, error: lookupError } = await supabase
-    .from("programs")
-    .select("id, name")
-    .in("name", programs);
-  if (lookupError) {
-    throw new Error(
-      `No se pudieron resolver los programas declarados: ${lookupError.message}`
-    );
-  }
-
-  const rows = (matchedPrograms ?? []).map((program) => ({
+  const rows = programIds.map((programId) => ({
     user_id: userId,
-    program_id: program.id as string,
+    program_id: programId,
   }));
-  if (rows.length === 0) return;
 
   const { error } = await supabase
     .from("user_programs")

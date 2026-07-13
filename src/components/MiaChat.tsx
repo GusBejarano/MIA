@@ -4,6 +4,11 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/mia/claudeClient";
 import type { Profile, Stage } from "@/lib/mia/onboarding";
+import type { UiMessage, DetailSheetMessage } from "@/lib/mia/uiMessages";
+import ChipSelect from "@/components/mia/ChipSelect";
+import SummaryCards from "@/components/mia/SummaryCards";
+import BenefitCarousel from "@/components/mia/BenefitCarousel";
+import DetailSheet from "@/components/mia/DetailSheet";
 
 type ClientState = {
   history: ChatMessage[];
@@ -14,6 +19,22 @@ type ClientState = {
 
 type Phase = "phone-gate" | "chatting";
 
+type RenderMessage = {
+  id: number;
+  role: "user" | "assistant";
+  text: string;
+  ui?: UiMessage[];
+  /** Solo para mensajes assistant con un bloque chip_select ya resuelto. */
+  resolvedSelection?: string[];
+};
+
+let nextMessageId = 0;
+
+function joinNatural(items: string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} y ${items[items.length - 1]}`;
+}
+
 async function callMia(payload: Record<string, unknown>) {
   const res = await fetch("/api/mia", {
     method: "POST",
@@ -22,7 +43,7 @@ async function callMia(payload: Record<string, unknown>) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Algo salio mal");
-  return data as { reply: string; state: ClientState };
+  return data as { reply: string; ui: UiMessage[]; state: ClientState };
 }
 
 function getPosition(): Promise<GeolocationPosition> {
@@ -60,15 +81,21 @@ export default function MiaChat() {
   const [phoneInput, setPhoneInput] = useState("");
   const [phone, setPhone] = useState("");
   const [sessionState, setSessionState] = useState<ClientState | null>(null);
+  const [messages, setMessages] = useState<RenderMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detailMessage, setDetailMessage] = useState<DetailSheetMessage | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [sessionState?.history.length, loading]);
+  }, [messages.length, loading]);
+
+  function pushMessage(msg: Omit<RenderMessage, "id">) {
+    setMessages((prev) => [...prev, { ...msg, id: nextMessageId++ }]);
+  }
 
   async function handleStart(e: React.FormEvent) {
     e.preventDefault();
@@ -78,9 +105,10 @@ export default function MiaChat() {
     setLoading(true);
     setError(null);
     try {
-      const { state } = await callMia({ phone: trimmed });
+      const { reply, ui, state } = await callMia({ phone: trimmed });
       setPhone(trimmed);
       setSessionState(state);
+      pushMessage({ role: "assistant", text: reply, ui });
       setPhase("chatting");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Algo salio mal");
@@ -89,21 +117,19 @@ export default function MiaChat() {
     }
   }
 
-  async function sendTurn(
-    message: string,
-    extra: { locationPermissionGranted?: boolean; detectedCity?: string } = {}
-  ) {
+  async function sendTurn(message: string, extra: Record<string, unknown> = {}) {
     if (!sessionState) return;
     setLoading(true);
     setError(null);
     try {
-      const { state } = await callMia({
+      const { reply, ui, state } = await callMia({
         phone,
         message,
         state: sessionState,
         ...extra,
       });
       setSessionState(state);
+      pushMessage({ role: "assistant", text: reply, ui });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Algo salio mal");
     } finally {
@@ -132,6 +158,8 @@ export default function MiaChat() {
       }
     }
 
+    const text = granted ? "Sí, comparto mi ubicación" : "Prefiero no compartirla";
+    pushMessage({ role: "user", text });
     await sendTurn(granted ? "Si, dale." : "Prefiero no compartirla.", {
       locationPermissionGranted: granted,
       detectedCity,
@@ -143,7 +171,40 @@ export default function MiaChat() {
     const text = input.trim();
     if (!text || loading) return;
     setInput("");
+    pushMessage({ role: "user", text });
     await sendTurn(text);
+  }
+
+  async function handleChipConfirm(messageId: number, values: string[], labels: string[]) {
+    const text = labels.length > 0 ? joinNatural(labels) : "Listo";
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, resolvedSelection: values } : m))
+    );
+    pushMessage({ role: "user", text });
+    await sendTurn(text, { chipSelection: values });
+  }
+
+  async function handleCardSelect(id: string, title: string) {
+    if (!sessionState) return;
+    setLoading(true);
+    setError(null);
+    pushMessage({ role: "user", text: `Ver detalle: ${title}` });
+    try {
+      const { reply, ui, state } = await callMia({
+        phone,
+        message: `Quiero ver el detalle de "${title}"`,
+        state: sessionState,
+        viewDetailId: id,
+      });
+      setSessionState(state);
+      pushMessage({ role: "assistant", text: reply, ui });
+      const detail = ui.find((u): u is DetailSheetMessage => u.type === "detail_sheet");
+      if (detail) setDetailMessage(detail);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Algo salio mal");
+    } finally {
+      setLoading(false);
+    }
   }
 
   if (phase === "phone-gate") {
@@ -222,24 +283,41 @@ export default function MiaChat() {
 
       <div className="flex-1 overflow-y-auto px-4 py-4">
         <div className="mx-auto flex max-w-lg flex-col gap-3">
-          {sessionState?.history
-            .filter((m, i) => !(i === 0 && m.role === "user"))
-            .map((m, i) => (
-            <div
-              key={i}
-              className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className={
-                  m.role === "user"
-                    ? "max-w-[80%] rounded-2xl rounded-br-sm bg-gradient-to-r from-mia-violet to-mia-cyan px-4 py-2.5 text-white"
-                    : "max-w-[80%] rounded-2xl rounded-bl-sm bg-zinc-100 px-4 py-2.5 text-mia-ink"
-                }
-              >
-                <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
-                  {m.content}
-                </p>
+          {messages.map((m) => (
+            <div key={m.id} className="flex flex-col gap-2">
+              <div className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={
+                    m.role === "user"
+                      ? "max-w-[80%] rounded-2xl rounded-br-sm bg-gradient-to-r from-mia-violet to-mia-cyan px-4 py-2.5 text-white"
+                      : "max-w-[80%] rounded-2xl rounded-bl-sm bg-zinc-100 px-4 py-2.5 text-mia-ink"
+                  }
+                >
+                  <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{m.text}</p>
+                </div>
               </div>
+
+              {m.ui?.map((block, bi) => (
+                <div key={bi} className="ml-1">
+                  {block.type === "chip_select" && (
+                    <ChipSelect
+                      message={block}
+                      locked={!!m.resolvedSelection}
+                      resolvedSelection={m.resolvedSelection}
+                      onConfirm={(values) => {
+                        const labels = block.options
+                          .filter((o) => values.includes(o.value))
+                          .map((o) => o.label);
+                        handleChipConfirm(m.id, values, labels);
+                      }}
+                    />
+                  )}
+                  {block.type === "summary_cards" && <SummaryCards message={block} />}
+                  {block.type === "card_carousel" && (
+                    <BenefitCarousel message={block} onSelect={handleCardSelect} />
+                  )}
+                </div>
+              ))}
             </div>
           ))}
 
@@ -282,7 +360,7 @@ export default function MiaChat() {
             <form onSubmit={handleSend} className="flex items-center gap-2">
               <input
                 type="text"
-                placeholder="Escribe tu mensaje..."
+                placeholder="Escribe si algo no aparece..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 disabled={loading}
@@ -312,6 +390,10 @@ export default function MiaChat() {
           )}
         </div>
       </div>
+
+      {detailMessage && (
+        <DetailSheet message={detailMessage} onClose={() => setDetailMessage(null)} />
+      )}
     </div>
   );
 }

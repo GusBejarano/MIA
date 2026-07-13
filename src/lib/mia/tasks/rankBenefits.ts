@@ -1,6 +1,7 @@
 import { supabase } from "../supabaseClient";
 import { getUserProgramIds, getExposedBenefitIds } from "../store";
 import { categoryMatchesAffinity, type AffinityCategory } from "../categoryMapping";
+import { cityMatches } from "../cityMatch";
 import { miaTask } from "../claudeClient";
 
 export type RankedBenefit = {
@@ -22,23 +23,6 @@ type BenefitRow = {
   city: string;
   source_program_id: string;
 };
-
-/**
- * El campo `city` en Supabase es texto libre y puede traer varias ciudades
- * separadas por coma (ej. "Cali, Palmira, Colombia"). Hace match si algun
- * pedazo TERMINA en la ciudad buscada (no si la contiene en cualquier
- * posicion) - eso evita que "Cali" matchee "Calima, Colombia". No evita
- * todos los falsos positivos (una ciudad como "Nueva Cali" matchearia
- * igual), pero es mas probable que varien los finales que los inicios.
- */
-function cityMatches(dbCity: string, userCity: string): boolean {
-  const target = userCity.trim().toLowerCase();
-  if (!target) return false;
-  return dbCity
-    .split(",")
-    .map((piece) => piece.trim().toLowerCase())
-    .some((piece) => piece.endsWith(target));
-}
 
 /**
  * Ranking de las 3 mejores recomendaciones desde el catalogo real de

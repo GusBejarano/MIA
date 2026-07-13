@@ -1,7 +1,7 @@
-// Mapeo entre los baldes de afinidad de MIA (lo que pregunta la Pregunta 2 del
-// onboarding y clasifica classifyAffinity.ts) y las categorias reales que
-// vienen cargadas en benefits.category (texto libre, a veces compuesto por
-// varias separadas con coma, ej. "Educacion, Entretenimiento").
+// Mapeo entre los baldes de afinidad de MIA (usados por rankBenefits.ts y
+// detectBenefitRequest.ts) y las categorias reales que vienen cargadas en
+// benefits.category (texto libre, a veces compuesto por varias separadas
+// con coma, ej. "Educacion, Entretenimiento").
 //
 // Cada balde puede matchear una o mas categorias reales - se revisa y amplia
 // a mano cada vez que se carga un Benefactor nuevo con categorias distintas.
@@ -49,4 +49,16 @@ export function categoryMatchesAffinity(
     .filter(Boolean);
   const targets = CATEGORY_MATCHES[affinity];
   return pieces.some((p) => targets.includes(p));
+}
+
+/**
+ * Lookup inverso: dada una categoria real (ya normalizada a minusculas, tal
+ * como la elige el usuario en el flujo de chips), devuelve el balde de
+ * afinidad al que pertenece - si hay alguno mapeado. Se usa para que
+ * freeChat sepa por que categoria seguir buscando despues de que el usuario
+ * eligio via chips, sin haber pasado por classifyAffinity.
+ */
+export function affinityForRealCategory(realCategory: string): AffinityCategory | undefined {
+  const key = realCategory.trim().toLowerCase();
+  return AFFINITY_CATEGORIES.find((a) => CATEGORY_MATCHES[a].includes(key));
 }
