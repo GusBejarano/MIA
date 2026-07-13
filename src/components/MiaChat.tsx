@@ -30,6 +30,10 @@ type RenderMessage = {
 
 let nextMessageId = 0;
 
+// Recuerda el ultimo telefono usado en ESTE dispositivo/navegador (nunca en
+// el servidor) para no hacerlo re-digitar - sigue pudiendo escribir otro.
+const REMEMBERED_PHONE_KEY = "mia_phone";
+
 function joinNatural(items: string[]): string {
   if (items.length <= 1) return items.join("");
   return `${items.slice(0, -1).join(", ")} y ${items[items.length - 1]}`;
@@ -93,6 +97,16 @@ export default function MiaChat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, loading]);
 
+  useEffect(() => {
+    // Leer localStorage en el initializer de useState causaria un mismatch
+    // de hidratacion (la pagina es estatica: el HTML del servidor nunca
+    // conoce el valor guardado en ESE navegador) - por eso se hace aqui,
+    // despues del primer render.
+    const remembered = window.localStorage.getItem(REMEMBERED_PHONE_KEY);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (remembered) setPhoneInput(remembered);
+  }, []);
+
   function pushMessage(msg: Omit<RenderMessage, "id">) {
     setMessages((prev) => [...prev, { ...msg, id: nextMessageId++ }]);
   }
@@ -106,6 +120,7 @@ export default function MiaChat() {
     setError(null);
     try {
       const { reply, ui, state } = await callMia({ phone: trimmed });
+      window.localStorage.setItem(REMEMBERED_PHONE_KEY, trimmed);
       setPhone(trimmed);
       setSessionState(state);
       pushMessage({ role: "assistant", text: reply, ui });
@@ -222,13 +237,12 @@ export default function MiaChat() {
           <p className="-mt-4 text-sm text-zinc-400">
             by Descuentos Inteligentes
           </p>
-          <p className="text-2xl font-semibold leading-snug text-mia-ink">
-            MIA encuentra, entre cientos de beneficios, los que sí son para
-            ti.
+          <p className="max-[380px]:text-xl text-2xl font-semibold leading-snug text-mia-ink">
+            ¿Sabías que existen descuentos esperando por ti?
           </p>
           <p className="max-w-md text-lg leading-8 text-zinc-600">
-            Descuentos que de verdad te sirven, sin perder tiempo revisando
-            cientos de promociones.
+            MIA te ayuda a encontrarlos y usarlos, donde y cuando los
+            necesitas.
           </p>
 
           <form
