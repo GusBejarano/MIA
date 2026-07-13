@@ -45,49 +45,55 @@ function printUi(ui: UiMessage[]) {
 async function main() {
   console.log("=== Simulador de conversacion con MIA (prueba local) ===");
   console.log(
-    "Estas preguntas de aqui abajo son del ARNES DE PRUEBA (simulan al navegador),"
-  );
-  console.log("no son mensajes de MIA. Los mensajes reales de MIA salen despues.\n");
-  console.log(
     "Nota: este CLI no dibuja chips ni carruseles de verdad - los imprime como texto.\n" +
       "Responde escribiendo el nombre/categoria tal cual aparece entre parentesis.\n"
   );
 
   const phone = await ask(
-    "[SIMULACION] Numero de telefono de prueba (identifica al usuario en Supabase, ej. +573001234567): "
+    "Numero de telefono de prueba (identifica al usuario en Supabase, ej. +573001234567): "
   );
-
-  const permAnswer = await ask(
-    "[SIMULACION] ¿El usuario va a conceder el permiso de ubicacion cuando MIA lo pida? (s/n): "
-  );
-  const simulatedPermission = permAnswer.toLowerCase().startsWith("s");
-
-  let simulatedGeoCity: string | undefined;
-  if (simulatedPermission) {
-    simulatedGeoCity = await ask(
-      "[SIMULACION] ¿Que ciudad detecta el geolocalizador? (ej. Cali, Bogota): "
-    );
-  }
 
   const session = new OnboardingSession(phone);
 
-  const firstMessage = await session.start();
-  console.log(`\nMIA: ${firstMessage}\n`);
+  const first = await session.start();
+  console.log(`\nMIA: ${first.reply}\n`);
+  printUi(first.ui);
 
-  const permReplyText = simulatedPermission ? "Sí, dale." : "Prefiero no compartirla.";
-  console.log(`Tú (auto): ${permReplyText}`);
-  let turn = await session.handleUserMessage(permReplyText, {
-    locationPermissionGranted: simulatedPermission,
-    detectedCity: simulatedGeoCity,
-  });
-  console.log(`\nMIA: ${turn.reply}\n`);
-  printUi(turn.ui);
+  // Si el usuario ya tenia ciudad guardada de una sesion anterior, start()
+  // ya salto directo a benefactores (o a elegir otra ciudad) - las
+  // preguntas de simulacion de permiso de ubicacion solo aplican si de
+  // verdad seguimos esperando esa respuesta.
+  if (session.stage === "location_permission") {
+    console.log(
+      "[SIMULACION] Las siguientes son del ARNES DE PRUEBA (simulan al navegador), no son mensajes de MIA.\n"
+    );
+    const permAnswer = await ask(
+      "[SIMULACION] ¿El usuario va a conceder el permiso de ubicacion cuando MIA lo pida? (s/n): "
+    );
+    const simulatedPermission = permAnswer.toLowerCase().startsWith("s");
+
+    let simulatedGeoCity: string | undefined;
+    if (simulatedPermission) {
+      simulatedGeoCity = await ask(
+        "[SIMULACION] ¿Que ciudad detecta el geolocalizador? (ej. Cali, Bogota): "
+      );
+    }
+
+    const permReplyText = simulatedPermission ? "Sí, dale." : "Prefiero no compartirla.";
+    console.log(`Tú (auto): ${permReplyText}`);
+    const turn = await session.handleUserMessage(permReplyText, {
+      locationPermissionGranted: simulatedPermission,
+      detectedCity: simulatedGeoCity,
+    });
+    console.log(`\nMIA: ${turn.reply}\n`);
+    printUi(turn.ui);
+  }
 
   while (true) {
     const userMessage = await ask("\nTú: ");
     if (userMessage.toLowerCase() === "salir") break;
 
-    turn = await session.handleUserMessage(userMessage);
+    const turn = await session.handleUserMessage(userMessage);
     console.log(`\nMIA: ${turn.reply}\n`);
     printUi(turn.ui);
   }

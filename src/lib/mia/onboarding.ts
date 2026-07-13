@@ -3,6 +3,7 @@ import { classifyOpenMessage } from "./tasks/classifyOpenMessage";
 import { matchManyFromList, matchOneFromList } from "./tasks/matchFromText";
 import {
   getOrCreateUserId,
+  getUserCity,
   saveCity,
   saveCityInterest,
   saveAffinity,
@@ -14,6 +15,7 @@ import {
   getAvailableCategories,
   getBenefitsForCategory,
   getBenefitDetail,
+  cityHasCoverage,
   colorForId,
   type BenefactorOption,
   type CategoryOption,
@@ -26,7 +28,11 @@ import type {
   DetailSheetMessage,
 } from "./uiMessages";
 
-const SUPPORTED_CITIES = ["Cali"]; // MVP: crece con el tiempo, hoy solo Cali
+// Unica ciudad real con datos cargados hoy - se usa solo como sugerencia de
+// chip cuando hay que ofrecer una ciudad. La cobertura real (¿esta ciudad
+// tiene beneficios?) SIEMPRE se valida dinamicamente via cityHasCoverage,
+// nunca contra esta constante.
+const SUGGESTED_CITY = "Cali";
 const MAX_BENEFACTORS = 3;
 
 // Solo la ubicacion es un flujo verdaderamente secuencial/obligatorio. Todo
@@ -37,7 +43,6 @@ const MAX_BENEFACTORS = 3;
 export type Stage =
   | "location_permission"
   | "location_city_choice"
-  | "location_city_text"
   | "benefactor_select"
   | "category_select"
   | "benefit_browse"
@@ -69,8 +74,16 @@ export class OnboardingSession {
    */
   constructor(private readonly phone: string) {}
 
-  /** Arranca la conversacion: resuelve/crea el usuario y MIA pide el permiso de ubicacion. */
-  async start(): Promise<string> {
+  /**
+   * Arranca la conversacion. Si el usuario ya tiene una ciudad guardada de
+   * una visita anterior, NO vuelve a pedir permiso de ubicacion:
+   * - Ciudad guardada con cobertura -> saluda reconociendo la continuidad y
+   *   va directo a elegir benefactores.
+   * - Ciudad guardada sin cobertura -> saluda igual, pero ofrece cambiar de
+   *   ciudad en vez de repetir el flujo de permiso desde cero.
+   * - Sin ciudad guardada -> flujo normal, pide permiso de ubicacion.
+   */
+  async start(): Promise<Turn> {
     this.userId = await getOrCreateUserId(this.phone);
 
     // La API de Claude exige al menos un mensaje en `messages` - el arranque
@@ -78,24 +91,40 @@ export class OnboardingSession {
     // que representa "el usuario abrio el chat".
     this.history.push({ role: "user", content: "Hola" });
 
-    const reply = await miaConversation(
-      this.history,
+    const savedCity = await getUserCity(this.userId);
+
+    if (savedCity) {
+      const hasCoverage = await cityHasCoverage(savedCity);
+
+      if (hasCoverage) {
+        this.profile.city = savedCity;
+        return this.startBenefactorSelect(
+          savedCity,
+          `Este es un usuario que ya conoces, ubicado en ${savedCity} (ciudad con cobertura). Saludalo reconociendo la continuidad, sin repetir preguntas de ubicacion ni de permiso. Luego pide que elija (o confirme) los programas o benefactores que tiene.`
+        );
+      }
+
+      return this.offerCityChoice(
+        `Este es un usuario que ya conoces, con ciudad guardada en ${savedCity}, que todavia no tiene cobertura. Saludalo con naturalidad reconociendo la continuidad, y preguntale con respeto si le interesaria conocer beneficios en otra ciudad.`
+      );
+    }
+
+    this.stage = "location_permission";
+    const reply = await this.emit(
       `Este es el inicio de la conversacion con un usuario nuevo. Da la bienvenida
 brevemente y pide el permiso de ubicacion, aclarando que solo se usa para
 mostrar descuentos cercanos y que no se guarda.`
     );
-    this.history.push({ role: "assistant", content: reply });
-    return reply;
+    return { reply, ui: [] };
   }
 
   /**
    * Procesa el turno del usuario. Solo la ubicacion tiene un enrutamiento
-   * secuencial real (`location_permission`/`location_city_choice`/
-   * `location_city_text`) - todo lo demas cae en freeChat, que interpreta
-   * el mensaje (y cualquier `chipSelection`) contra los datos reales del
-   * momento, no contra un estado de "paso pendiente".
+   * secuencial real (`location_permission`/`location_city_choice`) - todo
+   * lo demas cae en freeChat, que interpreta el mensaje (y cualquier
+   * `chipSelection`) contra los datos reales del momento.
    * - `locationPermissionGranted`/`detectedCity`: evento real de geolocalizacion.
-   * - `chipSelection`: valores elegidos al tocar chips (benefactores o categoria).
+   * - `chipSelection`: valores elegidos al tocar chips (benefactores, categoria o ciudad).
    * - `viewDetailId`: el usuario toco una tarjeta del carrusel - se procesa
    *   sin importar en que etapa este la sesion.
    */
@@ -122,9 +151,7 @@ mostrar descuentos cercanos y que no se guarda.`
       case "location_permission":
         return this.resolveLocationPermission(opts);
       case "location_city_choice":
-        return this.resolveCityChoice(userMessage);
-      case "location_city_text":
-        return this.resolveCityText(userMessage);
+        return this.resolveCityChoiceResponse(userMessage, opts);
       default:
         return this.freeChat(userMessage, opts.chipSelection);
     }
@@ -135,62 +162,83 @@ mostrar descuentos cercanos y que no se guarda.`
     detectedCity?: string;
   }): Promise<Turn> {
     if (opts.locationPermissionGranted) {
-      const city = opts.detectedCity ?? "Cali";
-      const supported = SUPPORTED_CITIES.includes(city);
+      const city = opts.detectedCity ?? SUGGESTED_CITY;
+      const hasCoverage = await cityHasCoverage(city);
       await saveCity(this.userId!, city, "geolocation");
       this.profile.city = city;
 
-      if (!supported) {
-        await saveCityInterest(this.userId!, city);
-        this.stage = "done";
-        const reply = await this.emit(
-          `El usuario concedio el permiso de ubicacion. Se detecto que esta en ${city}, que NO tiene cobertura todavia (el MVP solo cubre ${SUPPORTED_CITIES.join(
-            ", "
-          )}). Explica con respeto que por ahora la cobertura es limitada, que vas a investigar que hay disponible en ${city} y le avisaras.`
+      if (hasCoverage) {
+        return this.startBenefactorSelect(
+          city,
+          `El usuario concedio el permiso de ubicacion. Se detecto que esta en ${city}, que si tiene cobertura. Afirma la ciudad (no preguntes) y anuncia con entusiasmo moderado que hay beneficios disponibles. Luego pide que elija los programas o benefactores que tiene.`
         );
-        return { reply, ui: [] };
       }
 
-      return this.startBenefactorSelect(city, true);
-    }
-
-    const instruction = `El usuario no concedio el permiso de ubicacion. Sin insistir, ofrece el listado de ciudades disponibles del MVP (por ahora solo ${SUPPORTED_CITIES.join(
-      ", "
-    )}) preguntando si esta ahi o le interesa otra ciudad.`;
-    this.stage = "location_city_choice";
-    const reply = await this.emit(instruction);
-    return { reply, ui: [] };
-  }
-
-  private async resolveCityChoice(userMessage: string): Promise<Turn> {
-    const wantsOther = /otra/i.test(userMessage);
-
-    if (wantsOther) {
-      this.stage = "location_city_text";
-      const reply = await this.emit(
-        `El usuario quiere declarar una ciudad distinta. Pregunta en que ciudad se encuentra.`
+      await saveCityInterest(this.userId!, city);
+      return this.offerCityChoice(
+        `El usuario concedio el permiso de ubicacion. Se detecto que esta en ${city}, que NO tiene cobertura todavia. Explica con respeto que por ahora la cobertura es limitada, que vas a investigar que hay disponible en ${city} y le avisaras. Luego pregunta con respeto si le interesaria conocer beneficios en otra ciudad.`
       );
-      return { reply, ui: [] };
     }
 
-    const city = SUPPORTED_CITIES[0];
-    await saveCity(this.userId!, city, "manual");
-    this.profile.city = city;
-    return this.startBenefactorSelect(city, true);
+    return this.offerCityChoice(
+      `El usuario no concedio el permiso de ubicacion. Sin insistir, pregunta si le interesaria conocer beneficios en alguna ciudad especifica.`
+    );
   }
 
-  private async resolveCityText(userMessage: string): Promise<Turn> {
-    const city = userMessage.trim();
-    await saveCityInterest(this.userId!, city);
+  private cityChoiceChipMessage(count: number): ChipSelectMessage {
+    return {
+      type: "chip_select",
+      options: [{ label: SUGGESTED_CITY, value: SUGGESTED_CITY, count }],
+      multi: false,
+      allowFreeText: true,
+    };
+  }
+
+  /** Ofrece el chip de la ciudad sugerida + texto libre para cualquier otra. */
+  private async offerCityChoice(instruction: string): Promise<Turn> {
+    this.stage = "location_city_choice";
+    const benefactores = await getAvailableBenefactors(SUGGESTED_CITY);
+    const count = benefactores.reduce((sum, b) => sum + b.count, 0);
+    const reply = await this.emit(instruction);
+    return { reply, ui: [this.cityChoiceChipMessage(count)] };
+  }
+
+  private async resolveCityChoiceResponse(
+    userMessage: string,
+    opts: { chipSelection?: string[] }
+  ): Promise<Turn> {
+    const candidateCity = (opts.chipSelection?.[0] ?? userMessage).trim();
+
+    if (!candidateCity) {
+      const reply = await this.emit(
+        `No se entendio bien la ciudad que menciono el usuario. Pide con amabilidad que elija de las opciones o la escriba de nuevo.`
+      );
+      const benefactores = await getAvailableBenefactors(SUGGESTED_CITY);
+      const count = benefactores.reduce((sum, b) => sum + b.count, 0);
+      return { reply, ui: [this.cityChoiceChipMessage(count)] };
+    }
+
+    const hasCoverage = await cityHasCoverage(candidateCity);
+
+    if (hasCoverage) {
+      await saveCity(this.userId!, candidateCity, "manual");
+      this.profile.city = candidateCity;
+      return this.startBenefactorSelect(
+        candidateCity,
+        `El usuario confirmo que quiere ver beneficios en ${candidateCity}. Confirma con naturalidad y pide que elija los programas o benefactores que tiene ahi.`
+      );
+    }
+
+    await saveCityInterest(this.userId!, candidateCity);
     this.stage = "done";
     const reply = await this.emit(
-      `El usuario declaro que esta en ${city}, ciudad sin cobertura todavia. Confirma que vas a investigar que hay disponible ahi y que le avisaras.`
+      `El usuario declaro interes en ${candidateCity}, ciudad sin cobertura todavia. Confirma que vas a investigar que hay disponible ahi y que le avisaras, con respeto.`
     );
     return { reply, ui: [] };
   }
 
-  /** Arranca la etapa de seleccion de benefactores con datos reales de Supabase. */
-  private async startBenefactorSelect(city: string, affirmCity: boolean): Promise<Turn> {
+  /** Arranca (o reinicia) la etapa de seleccion de benefactores con datos reales de Supabase. */
+  private async startBenefactorSelect(city: string, instruction: string): Promise<Turn> {
     const benefactores = await getAvailableBenefactors(city);
 
     if (benefactores.length === 0) {
@@ -202,10 +250,6 @@ mostrar descuentos cercanos y que no se guarda.`
     }
 
     this.stage = "benefactor_select";
-    const instruction = affirmCity
-      ? `El usuario concedio el permiso de ubicacion y esta en ${city}, que si tiene cobertura. Afirma la ciudad (no preguntes) y anuncia con entusiasmo moderado que hay beneficios disponibles. Luego pide que elija los programas o benefactores que tiene (puede elegir varios, hasta ${MAX_BENEFACTORS}) - los va a ver como opciones para tocar, no hace falta que los listes en texto.`
-      : `Pide que el usuario elija (o agregue) los programas o benefactores que tiene (puede elegir varios, hasta ${MAX_BENEFACTORS}) - los va a ver como opciones para tocar, no hace falta que los listes en texto.`;
-
     const reply = await this.emit(instruction);
     return { reply, ui: [this.benefactorChipMessage(benefactores)] };
   }
@@ -398,13 +442,14 @@ mostrar descuentos cercanos y que no se guarda.`
    * de categoria real (los datos mismos dicen que es, no un "paso
    * pendiente" guardado) - si no hay chip, clasifica el mensaje abierto
    * para decidir si mostrar benefactores, el menu de categorias, el
-   * carrusel de una categoria puntual, o responder en texto plano (solo
-   * cuando el mensaje de verdad no tiene que ver con nada de esto).
+   * carrusel de una categoria puntual, cambiar de ciudad, o responder en
+   * texto plano (solo cuando el mensaje de verdad no tiene que ver con
+   * nada de esto).
    */
   private async freeChat(userMessage: string, chipSelection?: string[]): Promise<Turn> {
-    if (!SUPPORTED_CITIES.includes(this.profile.city ?? "")) {
+    if (!this.profile.city || !(await cityHasCoverage(this.profile.city))) {
       const reply = await this.emit(
-        `El usuario esta en conversacion libre, pero su ciudad (${this.profile.city}) todavia no tiene beneficios cargados. Respondele de forma natural segun el mensaje: "${userMessage}", sin inventar beneficios ni comercios.`
+        `El usuario esta en conversacion libre, pero su ciudad (${this.profile.city ?? "sin definir"}) todavia no tiene beneficios cargados. Respondele de forma natural segun el mensaje: "${userMessage}", sin inventar beneficios ni comercios.`
       );
       return { reply, ui: [] };
     }
@@ -461,6 +506,27 @@ mostrar descuentos cercanos y que no se guarda.`
         return { reply, ui: [] };
       }
       return this.showCarouselForCategory(chosen, benefactorIds);
+    }
+
+    if (intent.kind === "city") {
+      const hasCoverage = await cityHasCoverage(intent.cityName);
+
+      if (hasCoverage) {
+        await saveCity(this.userId!, intent.cityName, "manual");
+        this.profile.city = intent.cityName;
+        this.profile.selectedBenefactors = undefined;
+        this.profile.selectedCategory = undefined;
+        return this.startBenefactorSelect(
+          intent.cityName,
+          `El usuario quiere ver beneficios en ${intent.cityName}, que si tiene cobertura. Confirma el cambio de ciudad con naturalidad y pide que elija los programas o benefactores que tiene ahi.`
+        );
+      }
+
+      await saveCityInterest(this.userId!, intent.cityName);
+      const reply = await this.emit(
+        `El usuario pidio ver beneficios en ${intent.cityName}, que todavia NO tiene cobertura. Explica con respeto que por ahora no hay beneficios ahi, y ofrece seguir con ${this.profile.city} (la ciudad que ya tenia) o intentar con otra.`
+      );
+      return { reply, ui: [] };
     }
 
     // NINGUNA - conversacion normal, grounded, sin inventar nada.

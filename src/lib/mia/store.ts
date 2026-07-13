@@ -52,6 +52,19 @@ export async function saveCity(
   }
 }
 
+/** Ultima ciudad guardada del usuario (de cualquier sesion anterior), o null si nunca se guardo una. */
+export async function getUserCity(userId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("users")
+    .select("city")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`No se pudo leer la ciudad del usuario: ${error.message}`);
+  }
+  return (data?.city as string | null) ?? null;
+}
+
 export async function saveCityInterest(userId: string, city: string) {
   const { error } = await supabase.from("events").insert({
     user_id: userId,

@@ -23,6 +23,22 @@ export function colorForId(id: string): string {
   return CHIP_COLOR_PALETTE[hash % CHIP_COLOR_PALETTE.length];
 }
 
+/**
+ * Cobertura de una ciudad = tiene al menos un beneficio activo cuyo campo
+ * `city` matchea. Se recalcula en cada llamada (nunca un flag estatico) -
+ * la cobertura crece con el tiempo a medida que se cargan mas benefactores.
+ */
+export async function cityHasCoverage(city: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("benefits")
+    .select("city")
+    .eq("status", "activo");
+  if (error) {
+    throw new Error(`No se pudo verificar cobertura de ciudad: ${error.message}`);
+  }
+  return (data ?? []).some((row) => cityMatches(row.city as string, city));
+}
+
 export type BenefactorOption = {
   id: string;
   name: string;
