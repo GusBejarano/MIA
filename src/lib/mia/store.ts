@@ -108,11 +108,34 @@ export async function savePrograms(userId: string, programs: string[]) {
   }
 }
 
+/** Ids (uuid) de los programas que el usuario declaro tener. */
+export async function getUserProgramIds(userId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("user_programs")
+    .select("program_id")
+    .eq("user_id", userId);
+  if (error) {
+    throw new Error(`No se pudieron leer los programas del usuario: ${error.message}`);
+  }
+  return (data ?? []).map((row) => row.program_id as string);
+}
+
+/** Ids (uuid) de los beneficios ya mostrados a este usuario, para no repetirlos. */
+export async function getExposedBenefitIds(userId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("benefit_exposures")
+    .select("benefit_id")
+    .eq("user_id", userId);
+  if (error) {
+    throw new Error(`No se pudieron leer las exposiciones previas: ${error.message}`);
+  }
+  return (data ?? []).map((row) => row.benefit_id as string);
+}
+
 export async function saveExposure(userId: string, benefitId: string) {
-  // El catalogo real de beneficios (Fase 3) todavia no esta cargado en
-  // Supabase - mockBenefits.ts sigue generando ids de prueba ("b1", "b2"...)
-  // que no son UUID y no existen en la tabla benefits. Se ignoran en
-  // silencio hasta que el catalogo real reemplace mockBenefits.ts.
+  // Guard defensivo: benefit_id siempre deberia ser un uuid real de la
+  // tabla benefits. Si algo mas arriba genera un id malformado, se ignora
+  // en silencio en vez de romper la conversacion.
   if (!UUID_RE.test(benefitId)) return;
 
   const { error } = await supabase.from("benefit_exposures").insert({

@@ -180,13 +180,21 @@ mostrar descuentos cercanos y que no se guarda.`
     }
 
     const recommendations = await rankBenefits({
+      userId: this.userId!,
       city: this.profile.city!,
       affinity: this.profile.affinity!,
-      programs: this.profile.programs ?? [],
     });
 
     for (const r of recommendations) {
       await saveExposure(this.userId!, r.benefit.id);
+    }
+
+    this.stage = "done";
+
+    if (recommendations.length === 0) {
+      return this.emit(
+        `El perfil quedo completo, pero por ahora no hay beneficios cargados que apliquen a su combinacion de ciudad, afinidad y programas declarados. Agradece con naturalidad y respeto, sin inventar ni forzar una recomendacion que no aplique, y confirma que le avisaras apenas haya algo bueno para mostrarle.`
+      );
     }
 
     const listado = recommendations
@@ -196,9 +204,8 @@ mostrar descuentos cercanos y que no se guarda.`
       )
       .join("\n");
 
-    this.stage = "done";
     return this.emit(
-      `Este es el momento del reveal. Presenta exactamente estas 3 recomendaciones ya seleccionadas, con su razon, en tu propio tono (no las reescribas de forma generica, respeta la razon de cada una):\n${listado}\n\nCierra invitando a que escriba cuando quiera para ver que hay de nuevo.`
+      `Este es el momento del reveal. Presenta exactamente estas ${recommendations.length} recomendaciones ya seleccionadas, con su razon, en tu propio tono (no las reescribas de forma generica, respeta la razon de cada una):\n${listado}\n\nCierra invitando a que escriba cuando quiera para ver que hay de nuevo.`
     );
   }
 
