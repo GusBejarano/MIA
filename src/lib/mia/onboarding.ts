@@ -211,7 +211,9 @@ mostrar descuentos cercanos y que no se guarda.`
 
   private async freeChat(userMessage: string): Promise<string> {
     return this.emit(
-      `El usuario ya completo el onboarding y esta en conversacion libre. Respondele de forma natural segun el mensaje: "${userMessage}". No repitas las preguntas de onboarding.`
+      `El usuario ya completo el onboarding y esta en conversacion libre. Respondele de forma natural segun el mensaje: "${userMessage}". No repitas las preguntas de onboarding.
+
+Importante: en este turno NO tienes datos nuevos de beneficios reales (las 3 recomendaciones ya se las diste antes). No inventes, nombres ni menciones ningun comercio, marca o descuento nuevo, aunque el usuario pregunte por algo especifico (ej. un restaurante o categoria puntual) - si pregunta por algo que no tienes, dile con naturalidad que por ahora no tienes eso pero que le avisas apenas lo tengas. No completes con conocimiento general sobre negocios reales.`
     );
   }
 
