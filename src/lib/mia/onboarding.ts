@@ -52,8 +52,12 @@ export type Stage =
 export type Profile = {
   city?: string;
   selectedBenefactors?: string[];
+  /** Nombres para mostrar, mismo orden/largo que selectedBenefactors - el trail de navegacion los necesita sin tener que resolverlos aparte. */
+  selectedBenefactorNames?: string[];
   selectedCategory?: { value: string; label: string };
 };
+
+export type TrailLevel = "city" | "benefactor" | "category";
 
 export type Turn = { reply: string; ui: UiMessage[] };
 
@@ -136,6 +140,8 @@ mostrar descuentos cercanos y que no se guarda.`
       detectedCity?: string;
       chipSelection?: string[];
       viewDetailId?: string;
+      trailAction?: TrailLevel;
+      replaceBenefactors?: boolean;
     } = {}
   ): Promise<Turn> {
     // La API de Claude rechaza mensajes de usuario con contenido vacio. El
@@ -148,14 +154,61 @@ mostrar descuentos cercanos y que no se guarda.`
       return this.viewBenefitDetail(opts.viewDetailId);
     }
 
+    if (opts.trailAction) {
+      return this.handleTrailAction(opts.trailAction);
+    }
+
     switch (this.stage) {
       case "location_permission":
         return this.resolveLocationPermission(opts);
       case "location_city_choice":
         return this.resolveCityChoiceResponse(userMessage, opts);
       default:
-        return this.freeChat(userMessage, opts.chipSelection);
+        return this.freeChat(userMessage, opts.chipSelection, opts.replaceBenefactors);
     }
+  }
+
+  /**
+   * El usuario toco un nodo del path navegable (breadcrumb) para cambiar de
+   * ciudad/benefactor/categoria. Reutiliza los mismos chips que el resto del
+   * flujo - la unica diferencia con freeChat es que aca no hace falta
+   * clasificar el mensaje, la intencion ya es explicita por el nodo tocado.
+   */
+  private async handleTrailAction(level: TrailLevel): Promise<Turn> {
+    if (level === "city") {
+      return this.offerCityChoice(
+        `El usuario toco el nodo de ciudad en el trail de navegacion - quiere cambiar de ciudad. Pregunta con naturalidad a cual le gustaria cambiar.`
+      );
+    }
+
+    if (level === "benefactor") {
+      const benefactores = await getAvailableBenefactors(this.profile.city!);
+      if (benefactores.length === 0) {
+        const reply = await this.emit(
+          `El usuario quiere cambiar de benefactor pero no hay ninguno disponible en ${this.profile.city}. Dile con naturalidad que por ahora no hay opciones ahi.`
+        );
+        return { reply, ui: [] };
+      }
+      const reply = await this.emit(
+        `El usuario toco el nodo de benefactor en el trail de navegacion, dentro de ${this.profile.city}. Pregunta con naturalidad a cual (o cuales) programa le gustaria cambiar.`
+      );
+      return { reply, ui: [this.benefactorChipMessage(benefactores)] };
+    }
+
+    // categoria
+    const benefactorIds = this.profile.selectedBenefactors ?? [];
+    if (benefactorIds.length === 0) {
+      const benefactores = await getAvailableBenefactors(this.profile.city!);
+      const reply = await this.emit(
+        `El usuario quiere cambiar de categoria pero todavia no tiene programas elegidos. Pidele con naturalidad que elija primero un programa.`
+      );
+      return { reply, ui: benefactores.length ? [this.benefactorChipMessage(benefactores)] : [] };
+    }
+    const categorias = await getAvailableCategories(benefactorIds, this.profile.city!);
+    const reply = await this.emit(
+      `El usuario toco el nodo de categoria en el trail de navegacion. Pregunta con naturalidad a cual categoria le gustaria cambiar.`
+    );
+    return { reply, ui: [this.categoryChipMessage(categorias)] };
   }
 
   private async resolveLocationPermission(opts: {
@@ -228,6 +281,7 @@ mostrar descuentos cercanos y que no se guarda.`
       // vez de arrastrar la de la ciudad anterior.
       if (isCityChange) {
         this.profile.selectedBenefactors = undefined;
+        this.profile.selectedBenefactorNames = undefined;
         this.profile.selectedCategory = undefined;
       }
       return this.startBenefactorSelect(
@@ -287,12 +341,15 @@ mostrar descuentos cercanos y que no se guarda.`
 
   /**
    * Resuelve una seleccion de benefactores - por chip o por texto libre.
-   * SUMA a lo que ya tenia elegido (no reemplaza): si el usuario ya tenia
-   * Comfandi y ahora dice "tambien tengo Comfenalco", se queda con ambos.
+   * Por defecto SUMA a lo que ya tenia elegido (si el usuario ya tenia
+   * Comfandi y ahora dice "tambien tengo Comfenalco", se queda con ambos).
+   * `replace: true` (solo desde el trail de navegacion - "cambiar de
+   * benefactor" es un salto a otra rama, no un agregado) reemplaza la
+   * seleccion entera en vez de sumarla.
    */
   private async resolveBenefactorSelect(
     userMessage: string,
-    opts: { chipSelection?: string[] }
+    opts: { chipSelection?: string[]; replace?: boolean }
   ): Promise<Turn> {
     const available = await getAvailableBenefactors(this.profile.city!);
 
@@ -315,14 +372,22 @@ mostrar descuentos cercanos y que no se guarda.`
       return { reply, ui: [this.benefactorChipMessage(available)] };
     }
 
-    const merged = [...new Set([...(this.profile.selectedBenefactors ?? []), ...newIds])].slice(
-      0,
-      MAX_BENEFACTORS
-    );
+    const merged = opts.replace
+      ? newIds.slice(0, MAX_BENEFACTORS)
+      : [...new Set([...(this.profile.selectedBenefactors ?? []), ...newIds])].slice(
+          0,
+          MAX_BENEFACTORS
+        );
     this.profile.selectedBenefactors = merged;
     await saveProgramSelections(this.userId!, merged);
 
     const chosen = available.filter((b) => merged.includes(b.id));
+    this.profile.selectedBenefactorNames = chosen.map((b) => b.name);
+    // La categoria dependia del set de benefactores anterior - si cambio,
+    // se vuelve a elegir (el trail no debe mostrar una categoria "vieja"
+    // como si siguiera vigente).
+    this.profile.selectedCategory = undefined;
+
     const categorias = await getAvailableCategories(merged, this.profile.city!);
 
     if (categorias.length === 0) {
@@ -453,7 +518,11 @@ mostrar descuentos cercanos y que no se guarda.`
    * texto plano (solo cuando el mensaje de verdad no tiene que ver con
    * nada de esto).
    */
-  private async freeChat(userMessage: string, chipSelection?: string[]): Promise<Turn> {
+  private async freeChat(
+    userMessage: string,
+    chipSelection?: string[],
+    replaceBenefactors?: boolean
+  ): Promise<Turn> {
     if (!this.profile.city || !(await cityHasCoverage(this.profile.city))) {
       const reply = await this.emit(
         `El usuario esta en conversacion libre, pero su ciudad (${this.profile.city ?? "sin definir"}) todavia no tiene beneficios cargados. Respondele de forma natural segun el mensaje: "${userMessage}", sin inventar beneficios ni comercios.`
@@ -471,7 +540,10 @@ mostrar descuentos cercanos y que no se guarda.`
     if (chipSelection && chipSelection.length > 0) {
       const isBenefactorTap = benefactores.some((b) => chipSelection.includes(b.id));
       if (isBenefactorTap) {
-        return this.resolveBenefactorSelect(userMessage, { chipSelection });
+        return this.resolveBenefactorSelect(userMessage, {
+          chipSelection,
+          replace: replaceBenefactors,
+        });
       }
       const isCategoryTap = categorias.some((c) => c.value === chipSelection[0]);
       if (isCategoryTap) {
@@ -528,6 +600,7 @@ mostrar descuentos cercanos y que no se guarda.`
         await saveCity(this.userId!, intent.cityName, "manual");
         this.profile.city = intent.cityName;
         this.profile.selectedBenefactors = undefined;
+        this.profile.selectedBenefactorNames = undefined;
         this.profile.selectedCategory = undefined;
         return this.startBenefactorSelect(
           intent.cityName,

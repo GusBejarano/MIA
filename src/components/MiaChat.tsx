@@ -3,12 +3,13 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/mia/claudeClient";
-import type { Profile, Stage } from "@/lib/mia/onboarding";
+import type { Profile, Stage, TrailLevel } from "@/lib/mia/onboarding";
 import type { UiMessage, DetailSheetMessage } from "@/lib/mia/uiMessages";
 import ChipSelect from "@/components/mia/ChipSelect";
 import SummaryCards from "@/components/mia/SummaryCards";
 import BenefitCarousel from "@/components/mia/BenefitCarousel";
 import DetailSheet from "@/components/mia/DetailSheet";
+import NavTrail from "@/components/mia/NavTrail";
 
 type ClientState = {
   history: ChatMessage[];
@@ -26,6 +27,10 @@ type RenderMessage = {
   ui?: UiMessage[];
   /** Solo para mensajes assistant con un bloque chip_select ya resuelto. */
   resolvedSelection?: string[];
+  /** El chip_select de este mensaje vino de tocar el nodo "benefactor" del
+   * trail de navegacion - al confirmar hay que REEMPLAZAR la seleccion en
+   * vez de sumarla (es un salto de rama, no una declaracion aditiva). */
+  replaceBenefactorsOnConfirm?: boolean;
 };
 
 let nextMessageId = 0;
@@ -34,9 +39,23 @@ let nextMessageId = 0;
 // el servidor) para no hacerlo re-digitar - sigue pudiendo escribir otro.
 const REMEMBERED_PHONE_KEY = "mia_phone";
 
+const TRAIL_TAP_MESSAGE: Record<TrailLevel, string> = {
+  city: "Quiero cambiar de ciudad",
+  benefactor: "Quiero cambiar de programa",
+  category: "Quiero cambiar de categoría",
+};
+
 function joinNatural(items: string[]): string {
   if (items.length <= 1) return items.join("");
   return `${items.slice(0, -1).join(", ")} y ${items[items.length - 1]}`;
+}
+
+/** Etiqueta compacta para el nodo "benefactor" del trail cuando hay varios elegidos. */
+function formatBenefactorLabel(names: string[]): string {
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return names.join(" y ");
+  return `${names[0]} +${names.length - 1}`;
 }
 
 async function callMia(payload: Record<string, unknown>) {
@@ -192,11 +211,53 @@ export default function MiaChat() {
 
   async function handleChipConfirm(messageId: number, values: string[], labels: string[]) {
     const text = labels.length > 0 ? joinNatural(labels) : "Listo";
+    // Se lee de `messages` (closure de este render) antes de programar el
+    // update, no del updater funcional de setMessages - asi no depende de
+    // cuando React decida ejecutar ese callback.
+    const replaceBenefactors = messages.find((m) => m.id === messageId)
+      ?.replaceBenefactorsOnConfirm;
     setMessages((prev) =>
       prev.map((m) => (m.id === messageId ? { ...m, resolvedSelection: values } : m))
     );
     pushMessage({ role: "user", text });
-    await sendTurn(text, { chipSelection: values });
+    await sendTurn(text, {
+      chipSelection: values,
+      ...(replaceBenefactors ? { replaceBenefactors: true } : {}),
+    });
+  }
+
+  async function handleTrailTap(level: TrailLevel) {
+    if (!sessionState || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const { reply, ui, state } = await callMia({
+        phone,
+        message: TRAIL_TAP_MESSAGE[level],
+        state: sessionState,
+        trailAction: level,
+      });
+      setSessionState(state);
+      pushMessage({
+        role: "assistant",
+        text: reply,
+        ui,
+        replaceBenefactorsOnConfirm: level === "benefactor",
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Algo salio mal");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleGoHome() {
+    setPhase("phone-gate");
+    setSessionState(null);
+    setMessages([]);
+    setDetailMessage(null);
+    setInput("");
+    setError(null);
   }
 
   async function handleCardSelect(id: string, title: string) {
@@ -281,6 +342,13 @@ export default function MiaChat() {
   const showLocationButtons =
     sessionState?.stage === "location_permission" && !loading;
 
+  const profile = sessionState?.profile;
+  const trailCity = profile?.city;
+  const trailBenefactorLabel = profile?.selectedBenefactorNames?.length
+    ? formatBenefactorLabel(profile.selectedBenefactorNames)
+    : undefined;
+  const trailCategoryLabel = profile?.selectedCategory?.label;
+
   return (
     <div className="flex h-dvh flex-col bg-white">
       <header className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3">
@@ -294,6 +362,16 @@ export default function MiaChat() {
         <span className="mia-gradient-text text-lg font-bold">mia</span>
         <span className="text-xs text-zinc-400">by Descuentos Inteligentes</span>
       </header>
+
+      {trailCity && (
+        <NavTrail
+          city={trailCity}
+          benefactorLabel={trailBenefactorLabel}
+          categoryLabel={trailCategoryLabel}
+          onHome={handleGoHome}
+          onTapLevel={handleTrailTap}
+        />
+      )}
 
       <div className="flex-1 overflow-y-auto px-4 py-4">
         <div className="mx-auto flex max-w-lg flex-col gap-3">

@@ -3,6 +3,7 @@ import {
   OnboardingSession,
   type Profile,
   type Stage,
+  type TrailLevel,
 } from "@/lib/mia/onboarding";
 import type { ChatMessage } from "@/lib/mia/claudeClient";
 import type { UiMessage } from "@/lib/mia/uiMessages";
@@ -25,6 +26,8 @@ type RequestBody = {
   detectedCity?: string;
   chipSelection?: string[];
   viewDetailId?: string;
+  trailAction?: TrailLevel;
+  replaceBenefactors?: boolean;
 };
 
 export async function POST(req: NextRequest) {
@@ -43,6 +46,8 @@ export async function POST(req: NextRequest) {
     detectedCity,
     chipSelection,
     viewDetailId,
+    trailAction,
+    replaceBenefactors,
   } = body;
 
   if (!phone || typeof phone !== "string") {
@@ -73,6 +78,8 @@ export async function POST(req: NextRequest) {
         detectedCity,
         chipSelection,
         viewDetailId,
+        trailAction,
+        replaceBenefactors,
       });
       reply = turn.reply;
       ui = turn.ui;
