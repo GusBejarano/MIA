@@ -15,6 +15,7 @@ import {
   getAvailableCategories,
   getBenefitsForCategory,
   getBenefitDetail,
+  getCitiesWithCoverage,
   cityHasCoverage,
   colorForId,
   type BenefactorOption,
@@ -28,11 +29,11 @@ import type {
   DetailSheetMessage,
 } from "./uiMessages";
 
-// Unica ciudad real con datos cargados hoy - se usa solo como sugerencia de
-// chip cuando hay que ofrecer una ciudad. La cobertura real (¿esta ciudad
-// tiene beneficios?) SIEMPRE se valida dinamicamente via cityHasCoverage,
-// nunca contra esta constante.
-const SUGGESTED_CITY = "Cali";
+// Ciudad por defecto cuando la geolocalizacion tiene exito pero no devuelve
+// un nombre de ciudad (caso raro) - solo un fallback puntual, no limita la
+// cobertura real ni las opciones de ciudad que se ofrecen (esas salen
+// siempre de getCitiesWithCoverage, 100% dinamico).
+const FALLBACK_CITY = "Cali";
 const MAX_BENEFACTORS = 3;
 
 // Solo la ubicacion es un flujo verdaderamente secuencial/obligatorio. Todo
@@ -162,7 +163,7 @@ mostrar descuentos cercanos y que no se guarda.`
     detectedCity?: string;
   }): Promise<Turn> {
     if (opts.locationPermissionGranted) {
-      const city = opts.detectedCity ?? SUGGESTED_CITY;
+      const city = opts.detectedCity ?? FALLBACK_CITY;
       const hasCoverage = await cityHasCoverage(city);
       await saveCity(this.userId!, city, "geolocation");
       this.profile.city = city;
@@ -185,22 +186,21 @@ mostrar descuentos cercanos y que no se guarda.`
     );
   }
 
-  private cityChoiceChipMessage(count: number): ChipSelectMessage {
+  private cityChoiceChipMessage(cities: { name: string; count: number }[]): ChipSelectMessage {
     return {
       type: "chip_select",
-      options: [{ label: SUGGESTED_CITY, value: SUGGESTED_CITY, count }],
+      options: cities.map((c) => ({ label: c.name, value: c.name, count: c.count })),
       multi: false,
       allowFreeText: true,
     };
   }
 
-  /** Ofrece el chip de la ciudad sugerida + texto libre para cualquier otra. */
+  /** Ofrece chips con TODAS las ciudades reales con cobertura + texto libre para cualquier otra. */
   private async offerCityChoice(instruction: string): Promise<Turn> {
     this.stage = "location_city_choice";
-    const benefactores = await getAvailableBenefactors(SUGGESTED_CITY);
-    const count = benefactores.reduce((sum, b) => sum + b.count, 0);
+    const cities = await getCitiesWithCoverage();
     const reply = await this.emit(instruction);
-    return { reply, ui: [this.cityChoiceChipMessage(count)] };
+    return { reply, ui: [this.cityChoiceChipMessage(cities)] };
   }
 
   private async resolveCityChoiceResponse(
@@ -213,9 +213,8 @@ mostrar descuentos cercanos y que no se guarda.`
       const reply = await this.emit(
         `No se entendio bien la ciudad que menciono el usuario. Pide con amabilidad que elija de las opciones o la escriba de nuevo.`
       );
-      const benefactores = await getAvailableBenefactors(SUGGESTED_CITY);
-      const count = benefactores.reduce((sum, b) => sum + b.count, 0);
-      return { reply, ui: [this.cityChoiceChipMessage(count)] };
+      const cities = await getCitiesWithCoverage();
+      return { reply, ui: [this.cityChoiceChipMessage(cities)] };
     }
 
     const hasCoverage = await cityHasCoverage(candidateCity);

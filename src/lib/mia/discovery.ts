@@ -39,6 +39,46 @@ export async function cityHasCoverage(city: string): Promise<boolean> {
   return (data ?? []).some((row) => cityMatches(row.city as string, city));
 }
 
+// El pais siempre aparece como ultimo pedazo del campo `city` (ej. "Cali,
+// Buga, Jamundi, Colombia") - se excluye explicitamente para que no salga
+// como si fuera una ciudad mas al enumerar cobertura real.
+const NON_CITY_TOKENS = new Set(["colombia"]);
+
+export type CityOption = {
+  name: string;
+  count: number;
+};
+
+/** Ciudades reales (atomicas) con al menos un beneficio activo, con su conteo. */
+export async function getCitiesWithCoverage(): Promise<CityOption[]> {
+  const { data, error } = await supabase
+    .from("benefits")
+    .select("city")
+    .eq("status", "activo");
+  if (error) {
+    throw new Error(`No se pudieron consultar las ciudades con cobertura: ${error.message}`);
+  }
+
+  const counts = new Map<string, { label: string; count: number }>();
+  for (const row of data ?? []) {
+    const pieces = (row.city as string)
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    for (const piece of pieces) {
+      const key = piece.toLowerCase();
+      if (NON_CITY_TOKENS.has(key)) continue;
+      const existing = counts.get(key);
+      if (existing) existing.count += 1;
+      else counts.set(key, { label: piece, count: 1 });
+    }
+  }
+
+  return [...counts.values()]
+    .map(({ label, count }) => ({ name: label, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
 export type BenefactorOption = {
   id: string;
   name: string;
