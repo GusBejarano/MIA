@@ -221,8 +221,16 @@ mostrar descuentos cercanos y que no se guarda.`
     const hasCoverage = await cityHasCoverage(candidateCity);
 
     if (hasCoverage) {
+      const isCityChange = Boolean(this.profile.city) && this.profile.city !== candidateCity;
       await saveCity(this.userId!, candidateCity, "manual");
       this.profile.city = candidateCity;
+      // Si es un cambio de ciudad real (no la primera vez), la disponibilidad
+      // de benefactores/categoria puede diferir - reiniciar la seleccion en
+      // vez de arrastrar la de la ciudad anterior.
+      if (isCityChange) {
+        this.profile.selectedBenefactors = undefined;
+        this.profile.selectedCategory = undefined;
+      }
       return this.startBenefactorSelect(
         candidateCity,
         `El usuario confirmo que quiere ver beneficios en ${candidateCity}. Confirma con naturalidad y pide que elija los programas o benefactores que tiene ahi.`
@@ -506,6 +514,12 @@ mostrar descuentos cercanos y que no se guarda.`
         return { reply, ui: [] };
       }
       return this.showCarouselForCategory(chosen, benefactorIds);
+    }
+
+    if (intent.kind === "city_menu") {
+      return this.offerCityChoice(
+        `El usuario quiere ver que ciudades tienen cobertura, o cambiar de ciudad, sin nombrar una en particular. Ofrece con naturalidad la opcion que aparece abajo (o que escriba otra si tiene una en mente).`
+      );
     }
 
     if (intent.kind === "city") {

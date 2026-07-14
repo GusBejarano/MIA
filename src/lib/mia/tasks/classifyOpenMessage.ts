@@ -5,16 +5,17 @@ export type OpenMessageIntent =
   | { kind: "benefactors" }
   | { kind: "category_menu" }
   | { kind: "category"; label: string }
+  | { kind: "city_menu" }
   | { kind: "city"; cityName: string };
 
 /**
- * Clasifica un mensaje de conversacion libre en una de 5 intenciones, para
+ * Clasifica un mensaje de conversacion libre en una de 6 intenciones, para
  * que MIA muestre la seleccion correspondiente (benefactores, menu de
- * categorias, el carrusel de una categoria puntual, o el cambio a otra
- * ciudad) en vez de responder con texto - el texto solo se usa cuando el
- * mensaje de verdad no tiene que ver con nada de esto (charla,
- * agradecimientos, preguntas generales). Tarea de Haiku 4.5, mismo patron
- * que el resto de clasificadores.
+ * categorias, el carrusel de una categoria puntual, el menu/chip de
+ * ciudad, o el cambio a una ciudad puntual) en vez de responder con texto -
+ * el texto solo se usa cuando el mensaje de verdad no tiene que ver con
+ * nada de esto (charla, agradecimientos, preguntas generales). Tarea de
+ * Haiku 4.5, mismo patron que el resto de clasificadores.
  */
 export async function classifyOpenMessage(
   message: string,
@@ -36,16 +37,19 @@ Clasifica la intencion en EXACTAMENTE una de estas opciones:
   especifica de esta lista: ${categoryLabels.join(", ") || "(ninguna disponible todavia)"}
   (ej. si dice "algo de mascotas" y "Mascotas" esta en la lista, responde
   CATEGORIA:Mascotas).
-- CIUDAD:<nombre de la ciudad mencionada>: quiere ver beneficios en una
-  ciudad distinta a la que tiene registrada ahora mismo (ej. "muestrame
-  beneficios en Bogota", "y en Palmira que hay", "estoy en Jamundi ahora").
+- CIUDADES: quiere ver que ciudades tienen cobertura, o cambiar de ciudad,
+  sin nombrar una especifica (ej. "quiero ver mas ciudades", "que otras
+  ciudades tienen", "puedo cambiar de ciudad?").
+- CIUDAD:<nombre de la ciudad mencionada>: nombra una ciudad especifica
+  distinta a la que tiene registrada ahora mismo (ej. "muestrame beneficios
+  en Bogota", "y en Palmira que hay", "estoy en Jamundi ahora").
 - NINGUNA: no tiene que ver con ver beneficios, categorias, programas o
   ciudades (saludo, agradecimiento, pregunta general sobre como funciona
   MIA, etc.)
 
 Programas/benefactores conocidos: ${benefactorNames.join(", ") || "(ninguno todavia)"}.
 
-Responde EXACTAMENTE con una linea, uno de: NINGUNA / BENEFACTORES / CATEGORIAS / CATEGORIA:<nombre> / CIUDAD:<nombre>`;
+Responde EXACTAMENTE con una linea, uno de: NINGUNA / BENEFACTORES / CATEGORIAS / CATEGORIA:<nombre> / CIUDADES / CIUDAD:<nombre>`;
 
   const raw = (await miaTask(prompt)).trim();
   const upper = raw.toUpperCase();
@@ -58,6 +62,8 @@ Responde EXACTAMENTE con una linea, uno de: NINGUNA / BENEFACTORES / CATEGORIAS 
     const match = categoryLabels.find((c) => c.toLowerCase() === name.toLowerCase());
     return match ? { kind: "category", label: match } : { kind: "none" };
   }
+
+  if (upper.startsWith("CIUDADES")) return { kind: "city_menu" };
 
   if (upper.startsWith("CIUDAD:")) {
     const cityName = raw.slice(raw.indexOf(":") + 1).trim();
