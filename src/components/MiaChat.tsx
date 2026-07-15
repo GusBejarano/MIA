@@ -30,6 +30,18 @@ type RenderMessage = {
 
 let nextMessageId = 0;
 
+// Recuerda el ultimo telefono usado en ESTE dispositivo/navegador (nunca en
+// el servidor) para no hacerlo re-digitar - sigue pudiendo escribir otro.
+const REMEMBERED_PHONE_KEY = "mia_phone";
+
+// Metadatos de build inyectados en next.config.ts (ver NEXT_PUBLIC_* ahi) -
+// version manual de package.json + hash corto del commit + prefijo de
+// entorno ("dev-" fuera de la rama main en Netlify, vacio en produccion).
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0";
+const BUILD_HASH = process.env.NEXT_PUBLIC_BUILD_HASH ?? "local";
+const ENV_PREFIX = process.env.NEXT_PUBLIC_ENV_PREFIX ?? "dev-";
+const VERSION_LABEL = `v${APP_VERSION} · ${ENV_PREFIX}${BUILD_HASH}`;
+
 function joinNatural(items: string[]): string {
   if (items.length <= 1) return items.join("");
   return `${items.slice(0, -1).join(", ")} y ${items[items.length - 1]}`;
@@ -86,12 +98,39 @@ export default function MiaChat() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detailMessage, setDetailMessage] = useState<DetailSheetMessage | null>(null);
+  const [versionCopied, setVersionCopied] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, loading]);
+
+  useEffect(() => {
+    // Leer localStorage en el initializer de useState causaria un mismatch
+    // de hidratacion (la pagina es estatica: el HTML del servidor nunca
+    // conoce el valor guardado en ESE navegador) - por eso se hace aqui,
+    // despues del primer render.
+    const remembered = window.localStorage.getItem(REMEMBERED_PHONE_KEY);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (remembered) setPhoneInput(remembered);
+  }, []);
+
+  async function handleCopyVersionInfo() {
+    const info = [
+      `MIA ${VERSION_LABEL}`,
+      `Entorno: ${ENV_PREFIX ? "Desarrollo" : "Producción"}`,
+      `Fecha: ${new Date().toISOString()}`,
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(info);
+      setVersionCopied(true);
+      setTimeout(() => setVersionCopied(false), 1500);
+    } catch {
+      // Clipboard API puede fallar sin HTTPS/permisos - no rompe la UI, el
+      // usuario simplemente no ve la confirmacion "Copiado".
+    }
+  }
 
   function pushMessage(msg: Omit<RenderMessage, "id">) {
     setMessages((prev) => [...prev, { ...msg, id: nextMessageId++ }]);
@@ -106,6 +145,7 @@ export default function MiaChat() {
     setError(null);
     try {
       const { reply, ui, state } = await callMia({ phone: trimmed });
+      window.localStorage.setItem(REMEMBERED_PHONE_KEY, trimmed);
       setPhone(trimmed);
       setSessionState(state);
       pushMessage({ role: "assistant", text: reply, ui });
@@ -222,13 +262,12 @@ export default function MiaChat() {
           <p className="-mt-4 text-sm text-zinc-400">
             by Descuentos Inteligentes
           </p>
-          <p className="text-2xl font-semibold leading-snug text-mia-ink">
-            MIA encuentra, entre cientos de beneficios, los que sí son para
-            ti.
+          <p className="max-[380px]:text-xl text-2xl font-semibold leading-snug text-mia-ink">
+            ¿Sabías que existen descuentos esperando por ti?
           </p>
           <p className="max-w-md text-lg leading-8 text-zinc-600">
-            Descuentos que de verdad te sirven, sin perder tiempo revisando
-            cientos de promociones.
+            MIA te ayuda a encontrarlos y usarlos, donde y cuando los
+            necesitas.
           </p>
 
           <form
@@ -259,6 +298,15 @@ export default function MiaChat() {
             Tu numero solo se usa para reconocerte entre visitas - nunca se
             comparte.
           </p>
+
+          <button
+            type="button"
+            onClick={handleCopyVersionInfo}
+            aria-label="Copiar información de versión para soporte"
+            className="text-[10px] text-zinc-300"
+          >
+            {versionCopied ? "Copiado" : VERSION_LABEL}
+          </button>
         </main>
       </div>
     );
