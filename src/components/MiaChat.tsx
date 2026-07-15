@@ -303,7 +303,7 @@ export default function MiaChat() {
             type="button"
             onClick={handleCopyVersionInfo}
             aria-label="Copiar información de versión para soporte"
-            className="text-[10px] text-zinc-300"
+            className="text-[10px] text-zinc-400"
           >
             {versionCopied ? "Copiado" : VERSION_LABEL}
           </button>
