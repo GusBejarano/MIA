@@ -3,11 +3,19 @@ import { hashPhone } from "./phoneHash";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export type UserProfile = {
+  id: string;
+  city: string | null;
+  locationPermissionGranted: boolean;
+};
+
 /**
  * Busca al usuario por el hash de su telefono, o lo crea si es la
- * primera vez que escribe. Devuelve el id (uuid) de la fila en `users`.
+ * primera vez que escribe. Devuelve su ciudad y permiso de ubicacion
+ * guardados (si los tiene) - esto es lo que le permite a un usuario que
+ * regresa saltarse la pregunta de ubicacion.
  */
-export async function getOrCreateUserId(phone: string): Promise<string> {
+export async function getOrCreateUser(phone: string): Promise<UserProfile> {
   const phoneHash = hashPhone(phone);
 
   const { data, error } = await supabase
@@ -16,7 +24,7 @@ export async function getOrCreateUserId(phone: string): Promise<string> {
       { phone_hash: phoneHash, last_active_at: new Date().toISOString() },
       { onConflict: "phone_hash" }
     )
-    .select("id")
+    .select("id, city, location_permission_granted")
     .single();
 
   if (error || !data) {
@@ -24,7 +32,38 @@ export async function getOrCreateUserId(phone: string): Promise<string> {
       `No se pudo crear/recuperar el usuario en Supabase: ${error?.message}`
     );
   }
-  return data.id as string;
+  return {
+    id: data.id as string,
+    city: (data.city as string | null) ?? null,
+    locationPermissionGranted: Boolean(data.location_permission_granted),
+  };
+}
+
+/**
+ * Marca que el usuario ya concedio el permiso de ubicacion, para no
+ * volver a pedirselo en sesiones futuras. Se llama una sola vez, la
+ * primera vez que lo concede.
+ */
+export async function saveLocationPermission(userId: string) {
+  const { error: userError } = await supabase
+    .from("users")
+    .update({ location_permission_granted: true })
+    .eq("id", userId);
+  if (userError) {
+    throw new Error(
+      `No se pudo guardar el permiso de ubicacion: ${userError.message}`
+    );
+  }
+
+  const { error: eventError } = await supabase.from("events").insert({
+    user_id: userId,
+    event_type: "location_permission_granted",
+  });
+  if (eventError) {
+    throw new Error(
+      `No se pudo registrar el evento location_permission_granted: ${eventError.message}`
+    );
+  }
 }
 
 export async function saveCity(

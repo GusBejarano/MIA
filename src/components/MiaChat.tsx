@@ -34,6 +34,44 @@ let nextMessageId = 0;
 // el servidor) para no hacerlo re-digitar - sigue pudiendo escribir otro.
 const REMEMBERED_PHONE_KEY = "mia_phone";
 
+// Recuerda, por numero de telefono, si ESTE dispositivo ya vio a ese numero
+// conceder el permiso de ubicacion - es solo la verificacion rapida local;
+// Supabase (users.location_permission_granted) es la fuente de verdad que
+// respalda esto si el usuario cambia de dispositivo (ver store.ts).
+const LOCATION_GRANTED_KEY = "mia_location_granted";
+
+function getLocationGrantedMap(): Record<string, boolean> {
+  try {
+    return JSON.parse(window.localStorage.getItem(LOCATION_GRANTED_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function rememberLocationGranted(phone: string) {
+  const map = getLocationGrantedMap();
+  map[phone] = true;
+  window.localStorage.setItem(LOCATION_GRANTED_KEY, JSON.stringify(map));
+}
+
+/**
+ * Confirma en el navegador (no en nuestro registro) si el permiso de
+ * geolocalizacion sigue concedido antes de invocarla en silencio - evita
+ * disparar el dialogo nativo del navegador sin contexto cuando el permiso
+ * fue revocado fuera de la app o nunca existio en este dispositivo.
+ */
+async function isGeolocationGranted(): Promise<boolean> {
+  if (!("permissions" in navigator)) return false;
+  try {
+    const status = await navigator.permissions.query({
+      name: "geolocation" as PermissionName,
+    });
+    return status.state === "granted";
+  } catch {
+    return false;
+  }
+}
+
 // Metadatos de build inyectados en next.config.ts (ver NEXT_PUBLIC_* ahi) -
 // version manual de package.json + hash corto del commit + prefijo de
 // entorno ("dev-" fuera de la rama main en Netlify, vacio en produccion).
@@ -144,8 +182,30 @@ export default function MiaChat() {
     setLoading(true);
     setError(null);
     try {
-      const { reply, ui, state } = await callMia({ phone: trimmed });
+      const payload: Record<string, unknown> = { phone: trimmed };
+
+      // Si este dispositivo ya vio a este numero conceder el permiso antes,
+      // intenta redetectar la ubicacion en segundo plano - sin mostrar el
+      // mensaje ni los botones - siempre que el navegador confirme que el
+      // permiso sigue concedido. Si algo falla, el backend simplemente cae
+      // de vuelta a la ultima ciudad que ya tenia guardada en Supabase.
+      if (getLocationGrantedMap()[trimmed] && (await isGeolocationGranted())) {
+        try {
+          const pos = await getPosition();
+          const detectedCity = await reverseGeocodeCity(
+            pos.coords.latitude,
+            pos.coords.longitude
+          );
+          payload.locationPermissionGranted = true;
+          if (detectedCity) payload.detectedCity = detectedCity;
+        } catch (err) {
+          console.error("Redeteccion silenciosa de ubicacion fallo:", err);
+        }
+      }
+
+      const { reply, ui, state } = await callMia(payload);
       window.localStorage.setItem(REMEMBERED_PHONE_KEY, trimmed);
+      if (state.profile?.locationPermissionGranted) rememberLocationGranted(trimmed);
       setPhone(trimmed);
       setSessionState(state);
       pushMessage({ role: "assistant", text: reply, ui });
@@ -197,6 +257,8 @@ export default function MiaChat() {
         granted = false;
       }
     }
+
+    if (granted) rememberLocationGranted(phone);
 
     const text = granted ? "Sí, comparto mi ubicación" : "Prefiero no compartirla";
     pushMessage({ role: "user", text });

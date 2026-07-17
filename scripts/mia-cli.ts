@@ -71,17 +71,20 @@ async function main() {
 
   const session = new OnboardingSession(phone);
 
-  const firstMessage = await session.start();
-  console.log(`\nMIA: ${firstMessage}\n`);
-
-  const permReplyText = simulatedPermission ? "Sí, dale." : "Prefiero no compartirla.";
-  console.log(`Tú (auto): ${permReplyText}`);
-  let turn = await session.handleUserMessage(permReplyText, {
-    locationPermissionGranted: simulatedPermission,
-    detectedCity: simulatedGeoCity,
-  });
+  let turn = await session.start();
   console.log(`\nMIA: ${turn.reply}\n`);
   printUi(turn.ui);
+
+  if (session.stage === "location_permission") {
+    const permReplyText = simulatedPermission ? "Sí, dale." : "Prefiero no compartirla.";
+    console.log(`Tú (auto): ${permReplyText}`);
+    turn = await session.handleUserMessage(permReplyText, {
+      locationPermissionGranted: simulatedPermission,
+      detectedCity: simulatedGeoCity,
+    });
+    console.log(`\nMIA: ${turn.reply}\n`);
+    printUi(turn.ui);
+  }
 
   while (true) {
     const userMessage = await ask("\nTú: ");

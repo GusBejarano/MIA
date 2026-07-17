@@ -59,7 +59,9 @@ export async function POST(req: NextRequest) {
     let ui: UiMessage[] = [];
 
     if (!state) {
-      reply = await session.start();
+      const turn = await session.start({ locationPermissionGranted, detectedCity });
+      reply = turn.reply;
+      ui = turn.ui;
     } else {
       session.history = state.history;
       session.stage = state.stage;

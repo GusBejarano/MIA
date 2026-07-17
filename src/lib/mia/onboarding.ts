@@ -2,9 +2,10 @@ import { miaConversation, type ChatMessage } from "./claudeClient";
 import { classifyOpenMessage } from "./tasks/classifyOpenMessage";
 import { matchManyFromList, matchOneFromList } from "./tasks/matchFromText";
 import {
-  getOrCreateUserId,
+  getOrCreateUser,
   saveCity,
   saveCityInterest,
+  saveLocationPermission,
   saveAffinity,
   saveProgramSelections,
   saveExposure,
@@ -29,6 +30,13 @@ import type {
 const SUPPORTED_CITIES = ["Cali"]; // MVP: crece con el tiempo, hoy solo Cali
 const MAX_BENEFACTORS = 3;
 
+// Mensaje fijo del primer contacto - no se genera por LLM porque su
+// redaccion exacta importa (honestidad sobre que la ubicacion si se
+// guarda, para poder saltarnos esta pregunta la proxima vez).
+const LOCATION_PERMISSION_MESSAGE = `¡Hola! Soy MIA. Te ayudo a descubrir los descuentos a los que ya tienes derecho, donde y cuando los necesites, incluso los que no sabías que existían.
+
+Para empezar, ¿me compartes tu ubicación? La uso para mostrarte los descuentos disponibles cerca de ti, y la recuerdo para que la próxima vez no tengas que volver a compartirla.`;
+
 // Solo la ubicacion es un flujo verdaderamente secuencial/obligatorio. Todo
 // lo posterior (benefactor_select/category_select/benefit_browse/done) es
 // descriptivo unicamente - handleUserMessage no las usa para enrutar, todas
@@ -45,6 +53,7 @@ export type Stage =
 
 export type Profile = {
   city?: string;
+  locationPermissionGranted?: boolean;
   selectedBenefactors?: string[];
   selectedCategory?: { value: string; label: string };
 };
@@ -69,23 +78,55 @@ export class OnboardingSession {
    */
   constructor(private readonly phone: string) {}
 
-  /** Arranca la conversacion: resuelve/crea el usuario y MIA pide el permiso de ubicacion. */
-  async start(): Promise<string> {
-    this.userId = await getOrCreateUserId(this.phone);
+  /**
+   * Arranca la conversacion: resuelve/crea el usuario.
+   * - Si ya habia concedido el permiso de ubicacion antes (Supabase, por
+   *   numero de telefono) MIA no vuelve a pedirlo: usa `opts.detectedCity`
+   *   si el cliente logro redetectarla en silencio (Permissions API en
+   *   estado "granted"), o si no la ciudad que ya tenia guardada.
+   * - Si nunca lo concedio, o lo rechazo en una sesion anterior ("Ahora
+   *   no"), se lo vuelve a pedir con el mismo mensaje de siempre.
+   */
+  async start(
+    opts: { locationPermissionGranted?: boolean; detectedCity?: string } = {}
+  ): Promise<Turn> {
+    const user = await getOrCreateUser(this.phone);
+    this.userId = user.id;
 
     // La API de Claude exige al menos un mensaje en `messages` - el arranque
     // no tiene un turno de usuario todavia, asi que sembramos uno sintetico
     // que representa "el usuario abrio el chat".
     this.history.push({ role: "user", content: "Hola" });
 
-    const reply = await miaConversation(
-      this.history,
-      `Este es el inicio de la conversacion con un usuario nuevo. Da la bienvenida
-brevemente y pide el permiso de ubicacion, aclarando que solo se usa para
-mostrar descuentos cercanos y que no se guarda.`
-    );
+    const granted = opts.locationPermissionGranted ?? user.locationPermissionGranted;
+    const city = opts.detectedCity ?? user.city ?? undefined;
+
+    if (granted && city) {
+      this.profile.city = city;
+      this.profile.locationPermissionGranted = true;
+      if (opts.detectedCity && opts.detectedCity !== user.city) {
+        await saveCity(this.userId, city, "geolocation");
+      }
+      if (!user.locationPermissionGranted) {
+        await saveLocationPermission(this.userId);
+      }
+
+      if (!SUPPORTED_CITIES.includes(city)) {
+        this.stage = "done";
+        const reply = await this.emit(
+          `El usuario regresa y ya habia concedido el permiso de ubicacion antes. Esta en ${city}, que NO tiene cobertura todavia (el MVP solo cubre ${SUPPORTED_CITIES.join(
+            ", "
+          )}). Saludalo reconociendo la continuidad, sin repetir el onboarding ni volver a pedir el permiso, y recuerdale con respeto que por ahora la cobertura ahi sigue siendo limitada.`
+        );
+        return { reply, ui: [] };
+      }
+
+      return this.startBenefactorSelect(city, false, true);
+    }
+
+    const reply = LOCATION_PERMISSION_MESSAGE;
     this.history.push({ role: "assistant", content: reply });
-    return reply;
+    return { reply, ui: [] };
   }
 
   /**
@@ -138,7 +179,9 @@ mostrar descuentos cercanos y que no se guarda.`
       const city = opts.detectedCity ?? "Cali";
       const supported = SUPPORTED_CITIES.includes(city);
       await saveCity(this.userId!, city, "geolocation");
+      await saveLocationPermission(this.userId!);
       this.profile.city = city;
+      this.profile.locationPermissionGranted = true;
 
       if (!supported) {
         await saveCityInterest(this.userId!, city);
@@ -190,7 +233,11 @@ mostrar descuentos cercanos y que no se guarda.`
   }
 
   /** Arranca la etapa de seleccion de benefactores con datos reales de Supabase. */
-  private async startBenefactorSelect(city: string, affirmCity: boolean): Promise<Turn> {
+  private async startBenefactorSelect(
+    city: string,
+    affirmCity: boolean,
+    returning = false
+  ): Promise<Turn> {
     const benefactores = await getAvailableBenefactors(city);
 
     if (benefactores.length === 0) {
@@ -202,7 +249,9 @@ mostrar descuentos cercanos y que no se guarda.`
     }
 
     this.stage = "benefactor_select";
-    const instruction = affirmCity
+    const instruction = returning
+      ? `El usuario regresa (ya habia concedido el permiso de ubicacion antes) y esta en ${city}, que si tiene cobertura. Saludalo con calidez reconociendo la continuidad, sin repetir el onboarding ni volver a pedir el permiso de ubicacion. Luego pide que elija los programas o benefactores que tiene (puede elegir varios, hasta ${MAX_BENEFACTORS}) - los va a ver como opciones para tocar, no hace falta que los listes en texto.`
+      : affirmCity
       ? `El usuario concedio el permiso de ubicacion y esta en ${city}, que si tiene cobertura. Afirma la ciudad (no preguntes) y anuncia con entusiasmo moderado que hay beneficios disponibles. Luego pide que elija los programas o benefactores que tiene (puede elegir varios, hasta ${MAX_BENEFACTORS}) - los va a ver como opciones para tocar, no hace falta que los listes en texto.`
       : `Pide que el usuario elija (o agregue) los programas o benefactores que tiene (puede elegir varios, hasta ${MAX_BENEFACTORS}) - los va a ver como opciones para tocar, no hace falta que los listes en texto.`;
 
