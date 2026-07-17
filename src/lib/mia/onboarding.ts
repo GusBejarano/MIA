@@ -1,6 +1,6 @@
 import { miaConversation, type ChatMessage } from "./claudeClient";
 import { classifyOpenMessage } from "./tasks/classifyOpenMessage";
-import { matchManyFromList, matchOneFromList } from "./tasks/matchFromText";
+import { matchOneFromList } from "./tasks/matchFromText";
 import {
   getOrCreateUser,
   saveCity,
@@ -28,9 +28,9 @@ import type {
   CardCarouselMessage,
   DetailSheetMessage,
 } from "./uiMessages";
+import { RELACION_ACTIVA_TERM } from "./copy";
 
 const SUPPORTED_CITIES = ["Cali"]; // MVP: crece con el tiempo, hoy solo Cali
-const MAX_BENEFACTORS = 3;
 
 // Mensaje fijo del primer contacto - no se genera por LLM porque su
 // redaccion exacta importa (honestidad sobre que la ubicacion si se
@@ -46,6 +46,20 @@ const LOCATION_DECLINED_MESSAGE = `Sin problema, entiendo. Aunque no compartiste
 // Valor especial del chip "Volver" en la pantalla de ciudades - le da al
 // usuario una segunda oportunidad real de conceder el permiso.
 const BACK_TO_LOCATION_PERMISSION = "__back_to_location_permission__";
+
+// Valor especial del chip "Volver" en la pantalla de benefactores - regresa
+// a la pantalla de ciudades por si quiere explorar otra.
+const BACK_TO_CITY_CHOICE = "__back_to_city_choice__";
+
+/**
+ * Mensaje fijo del primer contacto con la pantalla de benefactores - fijo
+ * (no LLM) porque el termino "relacion activa" necesita coincidir
+ * exactamente con RELACION_ACTIVA_TERM para que el frontend le pueda
+ * enganchar el tooltip encima de esa frase.
+ */
+function benefactorSelectMessage(city: string): string {
+  return `Perfecto, ${city}. Ya tenemos descuentos activos por acá, así que hay bastante para mostrarte. Cuéntame con cuál de estos benefactores tienes una ${RELACION_ACTIVA_TERM}:`;
+}
 
 // Solo la ubicacion es un flujo verdaderamente secuencial/obligatorio. Todo
 // lo posterior (benefactor_select/category_select/benefit_browse/done) es
@@ -204,6 +218,17 @@ export class OnboardingSession {
       return this.startBenefactorSelect(city, true);
     }
 
+    return this.showCityChoice();
+  }
+
+  /**
+   * Muestra (o vuelve a mostrar) la pantalla de ciudades con cobertura real.
+   * Limpia cualquier benefactor/categoria ya elegidos - pertenecian a la
+   * ciudad anterior, no tienen por que seguir siendo validos en la nueva.
+   */
+  private async showCityChoice(): Promise<Turn> {
+    this.profile.selectedBenefactors = undefined;
+    this.profile.selectedCategory = undefined;
     this.stage = "location_city_choice";
     this.history.push({ role: "assistant", content: LOCATION_DECLINED_MESSAGE });
     const cities = await getAvailableCities();
@@ -276,27 +301,42 @@ export class OnboardingSession {
     }
 
     this.stage = "benefactor_select";
-    const instruction = returning
-      ? `El usuario regresa (ya habia concedido el permiso de ubicacion antes) y esta en ${city}, que si tiene cobertura. Saludalo con calidez reconociendo la continuidad, sin repetir el onboarding ni volver a pedir el permiso de ubicacion. Luego pide que elija los programas o benefactores que tiene (puede elegir varios, hasta ${MAX_BENEFACTORS}) - los va a ver como opciones para tocar, no hace falta que los listes en texto.`
-      : affirmCity
-      ? `El usuario concedio el permiso de ubicacion y esta en ${city}, que si tiene cobertura. Afirma la ciudad (no preguntes) y anuncia con entusiasmo moderado que hay beneficios disponibles. Luego pide que elija los programas o benefactores que tiene (puede elegir varios, hasta ${MAX_BENEFACTORS}) - los va a ver como opciones para tocar, no hace falta que los listes en texto.`
-      : `Pide que el usuario elija (o agregue) los programas o benefactores que tiene (puede elegir varios, hasta ${MAX_BENEFACTORS}) - los va a ver como opciones para tocar, no hace falta que los listes en texto.`;
 
-    const reply = await this.emit(instruction);
+    if (returning) {
+      const reply = await this.emit(
+        `El usuario regresa (ya habia concedido el permiso de ubicacion antes) y esta en ${city}, que si tiene cobertura. Saludalo con calidez reconociendo la continuidad, sin repetir el onboarding ni volver a pedir el permiso de ubicacion. Luego pide que elija con cual de sus benefactores tiene una relacion activa (una sola opcion) - lo va a ver como opciones para tocar, no hace falta que las listes en texto.`
+      );
+      return { reply, ui: [this.benefactorChipMessage(benefactores)] };
+    }
+
+    if (!affirmCity) {
+      const reply = await this.emit(
+        `Pide que el usuario elija con cual de sus benefactores tiene una relacion activa (una sola opcion) - lo va a ver como opciones para tocar, no hace falta que las listes en texto.`
+      );
+      return { reply, ui: [this.benefactorChipMessage(benefactores)] };
+    }
+
+    // Copy fijo (ver benefactorSelectMessage) - el termino "relacion activa"
+    // necesita coincidir exactamente para que el frontend le enganche el
+    // tooltip, asi que este mensaje no pasa por el LLM.
+    const reply = benefactorSelectMessage(city);
+    this.history.push({ role: "assistant", content: reply });
     return { reply, ui: [this.benefactorChipMessage(benefactores)] };
   }
 
   private benefactorChipMessage(benefactores: BenefactorOption[]): ChipSelectMessage {
     return {
       type: "chip_select",
-      options: benefactores.map((b) => ({
-        label: b.name,
-        value: b.id,
-        count: b.count,
-        color: b.color,
-      })),
-      multi: true,
-      maxSelect: MAX_BENEFACTORS,
+      options: [
+        ...benefactores.map((b) => ({
+          label: b.name,
+          value: b.id,
+          count: b.count,
+          color: b.color,
+        })),
+        { label: "Volver", value: BACK_TO_CITY_CHOICE, count: 0, icon: "back" as const },
+      ],
+      multi: false,
       allowFreeText: true,
     };
   }
@@ -311,9 +351,9 @@ export class OnboardingSession {
   }
 
   /**
-   * Resuelve una seleccion de benefactores - por chip o por texto libre.
-   * SUMA a lo que ya tenia elegido (no reemplaza): si el usuario ya tenia
-   * Comfandi y ahora dice "tambien tengo Comfenalco", se queda con ambos.
+   * Resuelve la eleccion de benefactor - por chip o por texto libre. Es
+   * seleccion unica: REEMPLAZA lo que hubiera elegido antes (no suma), a
+   * diferencia del viejo flujo de "hasta 3" que acumulaba.
    */
   private async resolveBenefactorSelect(
     userMessage: string,
@@ -321,47 +361,42 @@ export class OnboardingSession {
   ): Promise<Turn> {
     const available = await getAvailableBenefactors(this.profile.city!);
 
-    let newIds: string[];
+    let newId: string | undefined;
     if (opts.chipSelection && opts.chipSelection.length > 0) {
-      const validIds = new Set(available.map((b) => b.id));
-      newIds = opts.chipSelection.filter((id) => validIds.has(id));
+      newId = available.find((b) => b.id === opts.chipSelection![0])?.id;
     } else {
-      const names = available.map((b) => b.name);
-      const matchedNames = await matchManyFromList(userMessage, names);
-      newIds = matchedNames
-        .map((name) => available.find((b) => b.name === name)?.id)
-        .filter((id): id is string => Boolean(id));
+      const matchedName = await matchOneFromList(
+        userMessage,
+        available.map((b) => b.name)
+      );
+      newId = available.find((b) => b.name === matchedName)?.id;
     }
 
-    if (newIds.length === 0) {
+    if (!newId) {
       const reply = await this.emit(
-        `El usuario respondio "${userMessage}" sobre que programas tiene, pero eso no matchea con ninguno de los que tienen beneficios cargados ahora mismo (podria ser un programa real que simplemente no tiene beneficios cargados todavia, o algo que no se entendio). No asumas que lo agregaste ni digas "anotado" - dile con honestidad que por ahora no tienes beneficios de eso, y pide con amabilidad que elija de las opciones disponibles o lo escriba de otra forma.`
+        `El usuario respondio "${userMessage}" sobre con cual benefactor tiene una relacion activa, pero eso no matchea con ninguno de los que tienen beneficios cargados ahora mismo (podria ser un benefactor real que simplemente no tiene beneficios cargados todavia, o algo que no se entendio). No asumas que lo agregaste ni digas "anotado" - dile con honestidad que por ahora no tienes beneficios de eso, y pide con amabilidad que elija de las opciones disponibles o lo escriba de otra forma.`
       );
       return { reply, ui: [this.benefactorChipMessage(available)] };
     }
 
-    const merged = [...new Set([...(this.profile.selectedBenefactors ?? []), ...newIds])].slice(
-      0,
-      MAX_BENEFACTORS
-    );
-    this.profile.selectedBenefactors = merged;
-    await saveProgramSelections(this.userId!, merged);
+    this.profile.selectedBenefactors = [newId];
+    await saveProgramSelections(this.userId!, [newId]);
 
-    const chosen = available.filter((b) => merged.includes(b.id));
-    const categorias = await getAvailableCategories(merged, this.profile.city!);
+    const chosen = available.filter((b) => b.id === newId);
+    const categorias = await getAvailableCategories([newId], this.profile.city!);
 
     if (categorias.length === 0) {
       this.stage = "done";
       const reply = await this.emit(
-        `El usuario eligio programas validos, pero no hay categorias con beneficios activos para ellos en este momento. Dile con naturalidad y respeto, sin inventar, y confirma que le avisaras apenas haya algo.`
+        `El usuario eligio un benefactor valido, pero no hay categorias con beneficios activos para el en este momento. Dile con naturalidad y respeto, sin inventar, y confirma que le avisaras apenas haya algo.`
       );
       return { reply, ui: [] };
     }
 
     this.stage = "category_select";
-    const namesJoined = chosen.map((b) => b.name).join(" y ");
+    const benefactorName = chosen[0]?.name ?? "";
     const reply = await this.emit(
-      `El usuario tiene registrados estos programas: ${namesJoined}. Confirma con naturalidad que esto es lo que tiene disponible, sin listar detalles (eso lo va a ver como tarjetas). Luego pregunta que categoria le interesa revisar, como pregunta abierta.`
+      `El usuario tiene una relacion activa con: ${benefactorName}. Confirma con naturalidad que esto es lo que tiene disponible, sin listar detalles (eso lo va a ver como tarjetas). Luego pregunta que categoria le interesa revisar, como pregunta abierta.`
     );
 
     const summary: SummaryCardsMessage = {
@@ -478,6 +513,10 @@ export class OnboardingSession {
    * cuando el mensaje de verdad no tiene que ver con nada de esto).
    */
   private async freeChat(userMessage: string, chipSelection?: string[]): Promise<Turn> {
+    if (chipSelection?.[0] === BACK_TO_CITY_CHOICE) {
+      return this.showCityChoice();
+    }
+
     if (!SUPPORTED_CITIES.includes(this.profile.city ?? "")) {
       const reply = await this.emit(
         `El usuario esta en conversacion libre, pero su ciudad (${this.profile.city}) todavia no tiene beneficios cargados. Respondele de forma natural segun el mensaje: "${userMessage}", sin inventar beneficios ni comercios.`

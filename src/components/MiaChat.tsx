@@ -5,10 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/mia/claudeClient";
 import type { Profile, Stage } from "@/lib/mia/onboarding";
 import type { UiMessage, DetailSheetMessage } from "@/lib/mia/uiMessages";
+import { RELACION_ACTIVA_TERM, RELACION_ACTIVA_DEFINITION } from "@/lib/mia/copy";
 import ChipSelect from "@/components/mia/ChipSelect";
 import SummaryCards from "@/components/mia/SummaryCards";
 import BenefitCarousel from "@/components/mia/BenefitCarousel";
 import DetailSheet from "@/components/mia/DetailSheet";
+import InfoTooltip from "@/components/mia/InfoTooltip";
 
 type ClientState = {
   history: ChatMessage[];
@@ -79,6 +81,19 @@ const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0";
 const BUILD_HASH = process.env.NEXT_PUBLIC_BUILD_HASH ?? "local";
 const ENV_PREFIX = process.env.NEXT_PUBLIC_ENV_PREFIX ?? "dev-";
 const VERSION_LABEL = `v${APP_VERSION} · ${ENV_PREFIX}${BUILD_HASH}`;
+
+/** Ancla el tooltip de "relación activa" sobre esa frase cuando aparece en un mensaje. */
+function renderMessageText(text: string) {
+  const idx = text.indexOf(RELACION_ACTIVA_TERM);
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <InfoTooltip term={RELACION_ACTIVA_TERM} definition={RELACION_ACTIVA_DEFINITION} />
+      {text.slice(idx + RELACION_ACTIVA_TERM.length)}
+    </>
+  );
+}
 
 function joinNatural(items: string[]): string {
   if (items.length <= 1) return items.join("");
@@ -403,7 +418,9 @@ export default function MiaChat() {
                       : "max-w-[80%] rounded-2xl rounded-bl-sm bg-zinc-100 px-4 py-2.5 text-mia-ink"
                   }
                 >
-                  <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{m.text}</p>
+                  <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
+                    {renderMessageText(m.text)}
+                  </p>
                 </div>
               </div>
 
