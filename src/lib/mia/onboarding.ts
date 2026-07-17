@@ -30,8 +30,6 @@ import type {
 } from "./uiMessages";
 import { RELACION_ACTIVA_TERM } from "./copy";
 
-const SUPPORTED_CITIES = ["Cali"]; // MVP: crece con el tiempo, hoy solo Cali
-
 // Mensaje fijo del primer contacto - no se genera por LLM porque su
 // redaccion exacta importa (honestidad sobre que la ubicacion si se
 // guarda, para poder saltarnos esta pregunta la proxima vez).
@@ -134,14 +132,10 @@ export class OnboardingSession {
         await saveLocationPermission(this.userId);
       }
 
-      if (!SUPPORTED_CITIES.includes(city)) {
-        this.stage = "done";
-        const reply = await this.emit(
-          `El usuario regresa y ya habia concedido el permiso de ubicacion antes. Esta en ${city}, que NO tiene cobertura todavia (el MVP solo cubre ${SUPPORTED_CITIES.join(
-            ", "
-          )}). Saludalo reconociendo la continuidad, sin repetir el onboarding ni volver a pedir el permiso, y recuerdale con respeto que por ahora la cobertura ahi sigue siendo limitada.`
-        );
-        return { reply, ui: [] };
+      const benefactores = await getAvailableBenefactors(city);
+      if (benefactores.length === 0) {
+        await saveCityInterest(this.userId, city);
+        return this.showCityChoice();
       }
 
       return this.startBenefactorSelect(city, false, true);
@@ -198,21 +192,19 @@ export class OnboardingSession {
   }): Promise<Turn> {
     if (opts.locationPermissionGranted) {
       const city = opts.detectedCity ?? "Cali";
-      const supported = SUPPORTED_CITIES.includes(city);
       await saveCity(this.userId!, city, "geolocation");
       await saveLocationPermission(this.userId!);
       this.profile.city = city;
       this.profile.locationPermissionGranted = true;
 
-      if (!supported) {
+      // Validacion interna y silenciosa contra la cobertura real - sin
+      // mensaje intermedio. Si no hay descuentos activos ahi, salta directo
+      // al Paso 3.1 (elegir ciudad); si si hay, directo al Paso 4
+      // (benefactores), la ciudad detectada queda preseleccionada.
+      const benefactores = await getAvailableBenefactors(city);
+      if (benefactores.length === 0) {
         await saveCityInterest(this.userId!, city);
-        this.stage = "done";
-        const reply = await this.emit(
-          `El usuario concedio el permiso de ubicacion. Se detecto que esta en ${city}, que NO tiene cobertura todavia (el MVP solo cubre ${SUPPORTED_CITIES.join(
-            ", "
-          )}). Explica con respeto que por ahora la cobertura es limitada, que vas a investigar que hay disponible en ${city} y le avisaras.`
-        );
-        return { reply, ui: [] };
+        return this.showCityChoice();
       }
 
       return this.startBenefactorSelect(city, true);
@@ -517,14 +509,14 @@ export class OnboardingSession {
       return this.showCityChoice();
     }
 
-    if (!SUPPORTED_CITIES.includes(this.profile.city ?? "")) {
+    const benefactores = await getAvailableBenefactors(this.profile.city ?? "");
+    if (benefactores.length === 0) {
       const reply = await this.emit(
         `El usuario esta en conversacion libre, pero su ciudad (${this.profile.city}) todavia no tiene beneficios cargados. Respondele de forma natural segun el mensaje: "${userMessage}", sin inventar beneficios ni comercios.`
       );
       return { reply, ui: [] };
     }
 
-    const benefactores = await getAvailableBenefactors(this.profile.city!);
     const benefactorIds = this.profile.selectedBenefactors ?? [];
     const categorias =
       benefactorIds.length > 0
