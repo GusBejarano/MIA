@@ -66,6 +66,49 @@ export async function getAvailableBenefactors(city: string): Promise<BenefactorO
     .sort((a, b) => b.count - a.count);
 }
 
+export type CityOption = {
+  /** normalizada (minusculas, trim) - se usa como identificador para filtrar */
+  value: string;
+  /** version para mostrar, tal como aparece en la primera fila que la trae */
+  label: string;
+  count: number;
+};
+
+/**
+ * Todas las ciudades con al menos un beneficio activo, con su conteo real,
+ * de mayor a menor cobertura. El campo `city` es texto libre y puede traer
+ * varias ciudades separadas por coma (ver cityMatch.ts) - se descarta
+ * "Colombia" porque es el pais, no una ciudad (aparece como ultimo pedazo
+ * en ese formato), nunca una cobertura real en si misma.
+ */
+export async function getAvailableCities(): Promise<CityOption[]> {
+  const { data, error } = await supabase
+    .from("benefits")
+    .select("city")
+    .eq("status", "activo");
+  if (error) {
+    throw new Error(`No se pudieron consultar las ciudades: ${error.message}`);
+  }
+
+  const counts = new Map<string, { label: string; count: number }>();
+  for (const row of data ?? []) {
+    const pieces = (row.city as string)
+      .split(",")
+      .map((p) => p.trim())
+      .filter((p) => p && p.toLowerCase() !== "colombia");
+    for (const piece of pieces) {
+      const key = piece.toLowerCase();
+      const existing = counts.get(key);
+      if (existing) existing.count += 1;
+      else counts.set(key, { label: piece, count: 1 });
+    }
+  }
+
+  return [...counts.entries()]
+    .map(([value, { label, count }]) => ({ value, label, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
 export type CategoryOption = {
   /** normalizada (minusculas, trim) - se usa como identificador para filtrar */
   value: string;

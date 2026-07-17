@@ -7,6 +7,8 @@ export type ChipOption = {
   value: string;
   count: number;
   color?: string;
+  /** Cuando esta presente, el chip muestra este icono en vez del contador. */
+  icon?: "back";
 };
 
 export type ContextTab = {

@@ -13,11 +13,13 @@ import {
 import {
   getAvailableBenefactors,
   getAvailableCategories,
+  getAvailableCities,
   getBenefitsForCategory,
   getBenefitDetail,
   colorForId,
   type BenefactorOption,
   type CategoryOption,
+  type CityOption,
 } from "./discovery";
 import type {
   UiMessage,
@@ -37,6 +39,14 @@ const LOCATION_PERMISSION_MESSAGE = `¡Hola! Soy MIA. Te ayudo a descubrir los d
 
 Para empezar, ¿me compartes tu ubicación? La uso para mostrarte los descuentos disponibles cerca de ti, y la recuerdo para que la próxima vez no tengas que volver a compartirla.`;
 
+// Idem para el mensaje que sigue cuando el usuario no comparte la
+// ubicacion - tambien fijo, en vez de generado, por la misma razon.
+const LOCATION_DECLINED_MESSAGE = `Sin problema, entiendo. Aunque no compartiste tu ubicación, sí puedo mostrarte las ciudades donde ya tenemos descuentos activos esperando por ti — elige la que te interese explorar:`;
+
+// Valor especial del chip "Volver" en la pantalla de ciudades - le da al
+// usuario una segunda oportunidad real de conceder el permiso.
+const BACK_TO_LOCATION_PERMISSION = "__back_to_location_permission__";
+
 // Solo la ubicacion es un flujo verdaderamente secuencial/obligatorio. Todo
 // lo posterior (benefactor_select/category_select/benefit_browse/done) es
 // descriptivo unicamente - handleUserMessage no las usa para enrutar, todas
@@ -45,7 +55,6 @@ Para empezar, ¿me compartes tu ubicación? La uso para mostrarte los descuentos
 export type Stage =
   | "location_permission"
   | "location_city_choice"
-  | "location_city_text"
   | "benefactor_select"
   | "category_select"
   | "benefit_browse"
@@ -131,10 +140,10 @@ export class OnboardingSession {
 
   /**
    * Procesa el turno del usuario. Solo la ubicacion tiene un enrutamiento
-   * secuencial real (`location_permission`/`location_city_choice`/
-   * `location_city_text`) - todo lo demas cae en freeChat, que interpreta
-   * el mensaje (y cualquier `chipSelection`) contra los datos reales del
-   * momento, no contra un estado de "paso pendiente".
+   * secuencial real (`location_permission`/`location_city_choice`) - todo
+   * lo demas cae en freeChat, que interpreta el mensaje (y cualquier
+   * `chipSelection`) contra los datos reales del momento, no contra un
+   * estado de "paso pendiente".
    * - `locationPermissionGranted`/`detectedCity`: evento real de geolocalizacion.
    * - `chipSelection`: valores elegidos al tocar chips (benefactores o categoria).
    * - `viewDetailId`: el usuario toco una tarjeta del carrusel - se procesa
@@ -163,9 +172,7 @@ export class OnboardingSession {
       case "location_permission":
         return this.resolveLocationPermission(opts);
       case "location_city_choice":
-        return this.resolveCityChoice(userMessage);
-      case "location_city_text":
-        return this.resolveCityText(userMessage);
+        return this.resolveCityChoice(userMessage, opts);
       default:
         return this.freeChat(userMessage, opts.chipSelection);
     }
@@ -197,39 +204,59 @@ export class OnboardingSession {
       return this.startBenefactorSelect(city, true);
     }
 
-    const instruction = `El usuario no concedio el permiso de ubicacion. Sin insistir, ofrece el listado de ciudades disponibles del MVP (por ahora solo ${SUPPORTED_CITIES.join(
-      ", "
-    )}) preguntando si esta ahi o le interesa otra ciudad.`;
     this.stage = "location_city_choice";
-    const reply = await this.emit(instruction);
-    return { reply, ui: [] };
+    this.history.push({ role: "assistant", content: LOCATION_DECLINED_MESSAGE });
+    const cities = await getAvailableCities();
+    return { reply: LOCATION_DECLINED_MESSAGE, ui: [this.cityChipMessage(cities)] };
   }
 
-  private async resolveCityChoice(userMessage: string): Promise<Turn> {
-    const wantsOther = /otra/i.test(userMessage);
+  /**
+   * Resuelve la pantalla de ciudades tras declinar el permiso: por chip
+   * (una ciudad real, o "Volver") o por texto libre (ciudad no listada).
+   */
+  private async resolveCityChoice(
+    userMessage: string,
+    opts: { chipSelection?: string[] }
+  ): Promise<Turn> {
+    const selectedValue = opts.chipSelection?.[0];
 
-    if (wantsOther) {
-      this.stage = "location_city_text";
-      const reply = await this.emit(
-        `El usuario quiere declarar una ciudad distinta. Pregunta en que ciudad se encuentra.`
-      );
-      return { reply, ui: [] };
+    if (selectedValue === BACK_TO_LOCATION_PERMISSION) {
+      this.stage = "location_permission";
+      this.history.push({ role: "assistant", content: LOCATION_PERMISSION_MESSAGE });
+      return { reply: LOCATION_PERMISSION_MESSAGE, ui: [] };
     }
 
-    const city = SUPPORTED_CITIES[0];
-    await saveCity(this.userId!, city, "manual");
-    this.profile.city = city;
-    return this.startBenefactorSelect(city, true);
-  }
+    const cities = await getAvailableCities();
+    const typed = userMessage.trim().toLowerCase();
+    const city = selectedValue
+      ? cities.find((c) => c.value === selectedValue)
+      : cities.find((c) => c.value === typed);
 
-  private async resolveCityText(userMessage: string): Promise<Turn> {
-    const city = userMessage.trim();
-    await saveCityInterest(this.userId!, city);
+    if (city) {
+      await saveCity(this.userId!, city.label, "manual");
+      this.profile.city = city.label;
+      return this.startBenefactorSelect(city.label, true);
+    }
+
+    const declaredCity = userMessage.trim();
+    await saveCityInterest(this.userId!, declaredCity);
     this.stage = "done";
     const reply = await this.emit(
-      `El usuario declaro que esta en ${city}, ciudad sin cobertura todavia. Confirma que vas a investigar que hay disponible ahi y que le avisaras.`
+      `El usuario declaro que esta en ${declaredCity}, ciudad sin cobertura todavia. Confirma que vas a investigar que hay disponible ahi y que le avisaras.`
     );
     return { reply, ui: [] };
+  }
+
+  private cityChipMessage(cities: CityOption[]): ChipSelectMessage {
+    return {
+      type: "chip_select",
+      options: [
+        ...cities.map((c) => ({ label: c.label, value: c.value, count: c.count })),
+        { label: "Volver", value: BACK_TO_LOCATION_PERMISSION, count: 0, icon: "back" as const },
+      ],
+      multi: false,
+      allowFreeText: true,
+    };
   }
 
   /** Arranca la etapa de seleccion de benefactores con datos reales de Supabase. */

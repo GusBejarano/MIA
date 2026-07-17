@@ -1,7 +1,36 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { ChipSelectMessage } from "@/lib/mia/uiMessages";
+
+/** Flecha de retorno con el gradiente de marca de MIA (#7C5CFC → #4C7DFB). */
+function BackIcon() {
+  const gradientId = useId();
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="24" x2="24" y2="0">
+          <stop offset="0%" stopColor="#7C5CFC" />
+          <stop offset="100%" stopColor="#4C7DFB" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M10 6L4 12L10 18"
+        stroke={`url(#${gradientId})`}
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M4 12H15C17.7614 12 20 14.2386 20 17V18"
+        stroke={`url(#${gradientId})`}
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 export default function ChipSelect({
   message,
@@ -51,15 +80,19 @@ export default function ChipSelect({
               }
             >
               {o.label}
-              <span
-                className={
-                  isSelected
-                    ? "rounded-full bg-white/25 px-1.5 py-0.5 text-xs font-bold"
-                    : "rounded-full bg-zinc-100 px-1.5 py-0.5 text-xs font-bold text-zinc-500"
-                }
-              >
-                {o.count}
-              </span>
+              {o.icon === "back" ? (
+                <BackIcon />
+              ) : (
+                <span
+                  className={
+                    isSelected
+                      ? "rounded-full bg-white/25 px-1.5 py-0.5 text-xs font-bold"
+                      : "rounded-full bg-zinc-100 px-1.5 py-0.5 text-xs font-bold text-zinc-500"
+                  }
+                >
+                  {o.count}
+                </span>
+              )}
             </button>
           );
         })}
