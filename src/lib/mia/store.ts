@@ -178,3 +178,68 @@ export async function saveExposure(userId: string, benefitId: string) {
     );
   }
 }
+
+/** Calificacion (1-3) que el usuario le dio a un beneficio, o 0 si nunca lo califico. */
+export async function getRating(userId: string, benefitId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from("benefit_ratings")
+    .select("rating")
+    .eq("user_id", userId)
+    .eq("benefit_id", benefitId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`No se pudo consultar la calificacion: ${error.message}`);
+  }
+  return (data?.rating as number | undefined) ?? 0;
+}
+
+/** Calificaciones del usuario para varios beneficios a la vez (una sola consulta, para el carrusel). */
+export async function getRatingsForBenefits(
+  userId: string,
+  benefitIds: string[]
+): Promise<Record<string, number>> {
+  if (benefitIds.length === 0) return {};
+
+  const { data, error } = await supabase
+    .from("benefit_ratings")
+    .select("benefit_id, rating")
+    .eq("user_id", userId)
+    .in("benefit_id", benefitIds);
+  if (error) {
+    throw new Error(`No se pudieron consultar las calificaciones: ${error.message}`);
+  }
+
+  const ratings: Record<string, number> = {};
+  for (const row of data ?? []) {
+    ratings[row.benefit_id as string] = row.rating as number;
+  }
+  return ratings;
+}
+
+/**
+ * Fija la calificacion de un beneficio (1-3), o la borra si `rating` es 0 -
+ * la tabla tiene `CHECK (rating IN (1,2,3))`, 0 no es un valor guardable.
+ */
+export async function setRating(userId: string, benefitId: string, rating: number) {
+  if (rating === 0) {
+    const { error } = await supabase
+      .from("benefit_ratings")
+      .delete()
+      .eq("user_id", userId)
+      .eq("benefit_id", benefitId);
+    if (error) {
+      throw new Error(`No se pudo borrar la calificacion: ${error.message}`);
+    }
+    return;
+  }
+
+  const { error } = await supabase
+    .from("benefit_ratings")
+    .upsert(
+      { user_id: userId, benefit_id: benefitId, rating },
+      { onConflict: "user_id,benefit_id" }
+    );
+  if (error) {
+    throw new Error(`No se pudo guardar la calificacion: ${error.message}`);
+  }
+}

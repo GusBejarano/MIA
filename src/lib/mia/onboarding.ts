@@ -9,6 +9,8 @@ import {
   saveAffinity,
   saveProgramSelections,
   saveExposure,
+  getRating,
+  getRatingsForBenefits,
 } from "./store";
 import {
   getAvailableBenefactors,
@@ -27,8 +29,14 @@ import type {
   SummaryCardsMessage,
   CardCarouselMessage,
   DetailSheetMessage,
+  NavLink,
 } from "./uiMessages";
-import { RELACION_ACTIVA_TERM } from "./copy";
+import {
+  RELACION_ACTIVA_TERM,
+  NAV_BACK_TO_CITY_CHOICE,
+  NAV_BACK_TO_BENEFACTOR_SELECT,
+  NAV_BACK_TO_CATEGORY_SELECT,
+} from "./copy";
 
 // Mensaje fijo del primer contacto - no se genera por LLM porque su
 // redaccion exacta importa (honestidad sobre que la ubicacion si se
@@ -42,12 +50,10 @@ Para empezar, ¿me compartes tu ubicación? La uso para mostrarte los descuentos
 const LOCATION_DECLINED_MESSAGE = `Sin problema, entiendo. Aunque no compartiste tu ubicación, sí puedo mostrarte las ciudades donde ya tenemos descuentos activos esperando por ti — elige la que te interese explorar:`;
 
 // Valor especial del chip "Volver" en la pantalla de ciudades - le da al
-// usuario una segunda oportunidad real de conceder el permiso.
+// usuario una segunda oportunidad real de conceder el permiso. Local (no en
+// copy.ts) porque solo lo usa un chip, nunca un enlace de navegacion en
+// texto - el frontend nunca necesita conocerlo de antemano.
 const BACK_TO_LOCATION_PERMISSION = "__back_to_location_permission__";
-
-// Valor especial del chip "Volver" en la pantalla de benefactores - regresa
-// a la pantalla de ciudades por si quiere explorar otra.
-const BACK_TO_CITY_CHOICE = "__back_to_city_choice__";
 
 /**
  * Mensaje fijo del primer contacto con la pantalla de benefactores - fijo
@@ -57,6 +63,29 @@ const BACK_TO_CITY_CHOICE = "__back_to_city_choice__";
  */
 function benefactorSelectMessage(city: string): string {
   return `Perfecto, ${city}. Ya tenemos descuentos activos por acá, así que hay bastante para mostrarte. Cuéntame con cuál de estos benefactores tienes una ${RELACION_ACTIVA_TERM}:`;
+}
+
+/** Mensaje fijo del primer contacto con la pantalla de categorias. */
+function categorySelectMessage(benefactorName: string, city: string): string {
+  return `Perfecto, esto es lo que tienes disponible con ${benefactorName} en ${city}. Elige la categoría que quieras explorar:`;
+}
+
+/**
+ * Mensaje fijo de la pantalla del carrusel - categoria, benefactor y ciudad
+ * necesitan coincidir con esas mismas subcadenas exactas para que el
+ * frontend les enganche los enlaces de navegacion (ver navLinksForCarousel).
+ */
+function carouselMessage(category: string, benefactor: string, city: string): string {
+  return `Listo, aquí tienes las opciones de ${category} disponibles para ti con ${benefactor} en ${city}. Desliza hacia la derecha para ver todas las opciones y toca la que te interese para conocer el detalle.`;
+}
+
+/** Los tres enlaces tocables del mensaje del carrusel - ciudad, benefactor y categoria, cada uno salta a su pantalla de eleccion correspondiente. */
+function navLinksForCarousel(category: string, benefactor: string, city: string): NavLink[] {
+  return [
+    { term: category, action: NAV_BACK_TO_CATEGORY_SELECT },
+    { term: benefactor, action: NAV_BACK_TO_BENEFACTOR_SELECT },
+    { term: city, action: NAV_BACK_TO_CITY_CHOICE },
+  ];
 }
 
 // Solo la ubicacion es un flujo verdaderamente secuencial/obligatorio. Todo
@@ -76,10 +105,12 @@ export type Profile = {
   city?: string;
   locationPermissionGranted?: boolean;
   selectedBenefactors?: string[];
+  /** Nombre para mostrar del benefactor en selectedBenefactors[0] - cacheado para no releer Supabase solo para armar un mensaje. */
+  selectedBenefactorName?: string;
   selectedCategory?: { value: string; label: string };
 };
 
-export type Turn = { reply: string; ui: UiMessage[] };
+export type Turn = { reply: string; ui: UiMessage[]; navLinks?: NavLink[] };
 
 export class OnboardingSession {
   history: ChatMessage[] = [];
@@ -326,7 +357,7 @@ export class OnboardingSession {
           count: b.count,
           color: b.color,
         })),
-        { label: "Volver", value: BACK_TO_CITY_CHOICE, count: 0, icon: "back" as const },
+        { label: "Volver", value: NAV_BACK_TO_CITY_CHOICE, count: 0, icon: "back" as const },
       ],
       multi: false,
       allowFreeText: true,
@@ -336,10 +367,44 @@ export class OnboardingSession {
   private categoryChipMessage(categorias: CategoryOption[]): ChipSelectMessage {
     return {
       type: "chip_select",
-      options: categorias.map((c) => ({ label: c.label, value: c.value, count: c.count })),
+      options: [
+        ...categorias.map((c) => ({ label: c.label, value: c.value, count: c.count })),
+        { label: "Volver", value: NAV_BACK_TO_BENEFACTOR_SELECT, count: 0, icon: "back" as const },
+      ],
       multi: false,
       allowFreeText: true,
     };
+  }
+
+  /**
+   * Vuelve a mostrar la pantalla de benefactores de la ciudad actual - por
+   * si el usuario quiere explorar descuentos de otro benefactor distinto.
+   * Limpia benefactor/categoria ya elegidos, pertenecian a la eleccion
+   * anterior.
+   */
+  private async showBenefactorSelect(): Promise<Turn> {
+    this.profile.selectedBenefactors = undefined;
+    this.profile.selectedBenefactorName = undefined;
+    this.profile.selectedCategory = undefined;
+    return this.startBenefactorSelect(this.profile.city!, true);
+  }
+
+  /**
+   * Vuelve a mostrar la pantalla de categorias del benefactor y ciudad
+   * actuales - por si el usuario quiere explorar otra categoria distinta.
+   * No toca el benefactor elegido, solo limpia la categoria.
+   */
+  private async showCategorySelect(): Promise<Turn> {
+    this.profile.selectedCategory = undefined;
+    const benefactorIds = this.profile.selectedBenefactors ?? [];
+    const categorias = await getAvailableCategories(benefactorIds, this.profile.city!);
+    this.stage = "category_select";
+    const reply = categorySelectMessage(
+      this.profile.selectedBenefactorName ?? "",
+      this.profile.city!
+    );
+    this.history.push({ role: "assistant", content: reply });
+    return { reply, ui: [this.categoryChipMessage(categorias)] };
   }
 
   /**
@@ -371,10 +436,11 @@ export class OnboardingSession {
       return { reply, ui: [this.benefactorChipMessage(available)] };
     }
 
+    const chosen = available.filter((b) => b.id === newId);
     this.profile.selectedBenefactors = [newId];
+    this.profile.selectedBenefactorName = chosen[0]?.name;
     await saveProgramSelections(this.userId!, [newId]);
 
-    const chosen = available.filter((b) => b.id === newId);
     const categorias = await getAvailableCategories([newId], this.profile.city!);
 
     if (categorias.length === 0) {
@@ -387,9 +453,10 @@ export class OnboardingSession {
 
     this.stage = "category_select";
     const benefactorName = chosen[0]?.name ?? "";
-    const reply = await this.emit(
-      `El usuario tiene una relacion activa con: ${benefactorName}. Confirma con naturalidad que esto es lo que tiene disponible, sin listar detalles (eso lo va a ver como tarjetas). Luego pregunta que categoria le interesa revisar, como pregunta abierta.`
-    );
+    // Copy fijo (ver categorySelectMessage) - indica explicitamente ciudad
+    // y benefactor, no pasa por el LLM para no diluir esos datos reales.
+    const reply = categorySelectMessage(benefactorName, this.profile.city!);
+    this.history.push({ role: "assistant", content: reply });
 
     const summary: SummaryCardsMessage = {
       type: "summary_cards",
@@ -454,9 +521,27 @@ export class OnboardingSession {
     }
 
     this.stage = "done";
-    const reply = await this.emit(
-      `El usuario quiere ver la categoria "${chosen.label}". Confirma con naturalidad que le vas a mostrar las opciones disponibles ahi (no las listes en texto, las va a ver como tarjetas que puede tocar para ver el detalle).`
+    const city = this.profile.city!;
+    const benefactorName = this.profile.selectedBenefactorName ?? "";
+    // Copy fijo (ver carouselMessage) - ciudad/benefactor/categoria son
+    // ademas enlaces de navegacion, necesitan coincidir con esas subcadenas
+    // exactas, asi que este mensaje no pasa por el LLM.
+    const reply = carouselMessage(chosen.label, benefactorName, city);
+    this.history.push({ role: "assistant", content: reply });
+    const navLinks = navLinksForCarousel(chosen.label, benefactorName, city);
+
+    // Una sola consulta para las calificaciones de todos los beneficios
+    // visibles, no una por tarjeta.
+    const ratings = await getRatingsForBenefits(
+      this.userId!,
+      benefits.map((b) => b.id)
     );
+
+    // Los que el usuario ya califico mejor van primero - hace el carrusel
+    // mas atractivo de entrada. Sort estable: entre empates (misma
+    // calificacion, incluyendo los 0 sin calificar) se respeta el orden
+    // original.
+    benefits.sort((a, b) => (ratings[b.id] ?? 0) - (ratings[a.id] ?? 0));
 
     const carousel: CardCarouselMessage = {
       type: "card_carousel",
@@ -466,9 +551,10 @@ export class OnboardingSession {
         tag: b.tag,
         color: colorForId(b.sourceProgram),
         thumbUrl: b.thumbUrl,
+        rating: ratings[b.id] ?? 0,
       })),
     };
-    return { reply, ui: [carousel] };
+    return { reply, ui: [carousel], navLinks };
   }
 
   private async viewBenefitDetail(benefitId: string): Promise<Turn> {
@@ -491,7 +577,14 @@ export class OnboardingSession {
       `El usuario quiere ver el detalle de "${detail.title}". Dale una intro breve y natural (una sola frase) - el detalle completo se lo muestra la tarjeta, no lo repitas en texto.`
     );
 
-    const ui: DetailSheetMessage = { type: "detail_sheet", ...detail };
+    const rating = await getRating(this.userId!, benefitId);
+    // Ruta de contexto (Ciudad › Benefactor › Categoria) en vez del tag
+    // plano - cualquier beneficio llegado hasta aca pertenece siempre a la
+    // ciudad y benefactor ya elegidos (el carrusel los filtra por eso), asi
+    // que se arman con el perfil actual, sin volver a consultar la BD.
+    const breadcrumb = `${this.profile.city} › ${this.profile.selectedBenefactorName ?? ""} › ${detail.tag}`;
+
+    const ui: DetailSheetMessage = { type: "detail_sheet", ...detail, tag: breadcrumb, rating };
     return { reply, ui: [ui] };
   }
 
@@ -505,8 +598,14 @@ export class OnboardingSession {
    * cuando el mensaje de verdad no tiene que ver con nada de esto).
    */
   private async freeChat(userMessage: string, chipSelection?: string[]): Promise<Turn> {
-    if (chipSelection?.[0] === BACK_TO_CITY_CHOICE) {
+    if (chipSelection?.[0] === NAV_BACK_TO_CITY_CHOICE) {
       return this.showCityChoice();
+    }
+    if (chipSelection?.[0] === NAV_BACK_TO_BENEFACTOR_SELECT) {
+      return this.showBenefactorSelect();
+    }
+    if (chipSelection?.[0] === NAV_BACK_TO_CATEGORY_SELECT) {
+      return this.showCategorySelect();
     }
 
     const benefactores = await getAvailableBenefactors(this.profile.city ?? "");

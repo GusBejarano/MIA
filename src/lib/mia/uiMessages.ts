@@ -44,6 +44,8 @@ export type CarouselCard = {
   tag: string;
   color: string;
   thumbUrl: string | null;
+  /** Calificacion (1-3) que el usuario ya le dio a este beneficio, o 0 si no lo ha calificado. */
+  rating: number;
 };
 
 export type CardCarouselMessage = {
@@ -55,11 +57,14 @@ export type DetailSheetMessage = {
   type: "detail_sheet";
   id: string;
   title: string;
+  /** Ruta de contexto "Ciudad › Benefactor › Categoria", ya armada como un solo string. */
   tag: string;
   description: string;
   photoUrl: string | null;
   details: { label: string; value: string }[];
   links: { go: string | null; web: string | null; social: string | null };
+  /** Calificacion (1-3) que el usuario ya le dio a este beneficio, o 0 si no lo ha calificado. */
+  rating: number;
 };
 
 export type UiMessage =
@@ -67,3 +72,12 @@ export type UiMessage =
   | SummaryCardsMessage
   | CardCarouselMessage
   | DetailSheetMessage;
+
+/**
+ * Enlace de navegacion dentro del texto de una respuesta (ej. el nombre de
+ * la ciudad/benefactor/categoria en el mensaje del carrusel). `term` es la
+ * subcadena exacta a resaltar dentro de `reply`; `action` es uno de los
+ * codigos NAV_BACK_TO_* de copy.ts, que el frontend manda de vuelta como
+ * si fuera un chip tocado al tocar ese termino.
+ */
+export type NavLink = { term: string; action: string };

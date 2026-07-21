@@ -1,14 +1,37 @@
 "use client";
 
+import { useState } from "react";
 import type { DetailSheetMessage } from "@/lib/mia/uiMessages";
+import RatingStars from "@/components/mia/RatingStars";
 
 export default function DetailSheet({
   message,
+  userId,
   onClose,
 }: {
   message: DetailSheetMessage;
+  userId?: string;
   onClose: () => void;
 }) {
+  const [rating, setRating] = useState(message.rating);
+
+  async function handleRate(next: number) {
+    const previous = rating;
+    setRating(next);
+    if (!userId) return;
+    try {
+      const res = await fetch("/api/mia/rating", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, benefitId: message.id, rating: next }),
+      });
+      if (!res.ok) throw new Error("No se pudo guardar la calificacion");
+    } catch (err) {
+      console.error("No se pudo guardar la calificacion:", err);
+      setRating(previous);
+    }
+  }
+
   const links = [
     message.links.go
       ? { href: message.links.go, label: "Cómo llegar", icon: "📍" }
@@ -59,6 +82,7 @@ export default function DetailSheet({
           <span className="mb-2 inline-block rounded-lg bg-mia-violet/10 px-2.5 py-1 text-xs font-extrabold text-mia-violet">
             {message.tag}
           </span>
+          <RatingStars rating={rating} onRate={handleRate} />
           <h3 className="text-lg font-extrabold leading-snug text-mia-ink">
             {message.title}
           </h3>

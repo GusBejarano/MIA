@@ -5,7 +5,7 @@ import {
   type Stage,
 } from "@/lib/mia/onboarding";
 import type { ChatMessage } from "@/lib/mia/claudeClient";
-import type { UiMessage } from "@/lib/mia/uiMessages";
+import type { UiMessage, NavLink } from "@/lib/mia/uiMessages";
 
 // Backend stateless (Netlify Functions no conservan memoria entre
 // invocaciones): el estado completo de la sesion viaja de ida y vuelta
@@ -57,11 +57,13 @@ export async function POST(req: NextRequest) {
   try {
     let reply: string;
     let ui: UiMessage[] = [];
+    let navLinks: NavLink[] | undefined;
 
     if (!state) {
       const turn = await session.start({ locationPermissionGranted, detectedCity });
       reply = turn.reply;
       ui = turn.ui;
+      navLinks = turn.navLinks;
     } else {
       session.history = state.history;
       session.stage = state.stage;
@@ -76,6 +78,7 @@ export async function POST(req: NextRequest) {
       });
       reply = turn.reply;
       ui = turn.ui;
+      navLinks = turn.navLinks;
     }
 
     const nextState: ClientState = {
@@ -85,7 +88,7 @@ export async function POST(req: NextRequest) {
       userId: session.userId,
     };
 
-    return NextResponse.json({ reply, ui, state: nextState });
+    return NextResponse.json({ reply, ui, navLinks, state: nextState });
   } catch (err) {
     console.error("Error en /api/mia:", err);
     return NextResponse.json(

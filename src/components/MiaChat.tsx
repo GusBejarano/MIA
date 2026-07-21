@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/mia/claudeClient";
 import type { Profile, Stage } from "@/lib/mia/onboarding";
-import type { UiMessage, DetailSheetMessage } from "@/lib/mia/uiMessages";
+import type { UiMessage, DetailSheetMessage, NavLink } from "@/lib/mia/uiMessages";
 import { RELACION_ACTIVA_TERM, RELACION_ACTIVA_DEFINITION } from "@/lib/mia/copy";
 import ChipSelect from "@/components/mia/ChipSelect";
 import SummaryCards from "@/components/mia/SummaryCards";
@@ -26,6 +26,8 @@ type RenderMessage = {
   role: "user" | "assistant";
   text: string;
   ui?: UiMessage[];
+  /** Enlaces tocables dentro de `text` (ej. ciudad/benefactor/categoria en el carrusel). */
+  navLinks?: NavLink[];
   /** Solo para mensajes assistant con un bloque chip_select ya resuelto. */
   resolvedSelection?: string[];
 };
@@ -82,17 +84,73 @@ const BUILD_HASH = process.env.NEXT_PUBLIC_BUILD_HASH ?? "local";
 const ENV_PREFIX = process.env.NEXT_PUBLIC_ENV_PREFIX ?? "dev-";
 const VERSION_LABEL = `v${APP_VERSION} · ${ENV_PREFIX}${BUILD_HASH}`;
 
-/** Ancla el tooltip de "relación activa" sobre esa frase cuando aparece en un mensaje. */
-function renderMessageText(text: string) {
-  const idx = text.indexOf(RELACION_ACTIVA_TERM);
-  if (idx === -1) return text;
+type TextHighlight = { term: string; render: () => React.ReactNode };
+
+/**
+ * Reemplaza, dentro de un texto plano, cada subcadena que matchea con un
+ * highlight por el nodo que ese highlight define (tooltip de "relación
+ * activa", enlaces de navegacion del carrusel, etc.) - generico para poder
+ * combinar varios en el mismo mensaje. Solo la primera ocurrencia de cada
+ * termino cuenta (los mensajes son copy fijo, cada dato dinamico aparece
+ * una sola vez por diseno); si dos highlights se solapan, gana el que
+ * aparece mas a la izquierda.
+ */
+function renderRichText(text: string, highlights: TextHighlight[]): React.ReactNode {
+  const matches = highlights
+    .map((h) => ({ ...h, index: text.indexOf(h.term) }))
+    .filter((h) => h.index !== -1)
+    .sort((a, b) => a.index - b.index);
+
+  if (matches.length === 0) return text;
+
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  for (const m of matches) {
+    if (m.index < cursor) continue;
+    if (m.index > cursor) nodes.push(text.slice(cursor, m.index));
+    nodes.push(<span key={nodes.length}>{m.render()}</span>);
+    cursor = m.index + m.term.length;
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+
+  return <>{nodes}</>;
+}
+
+/** Enlace tocable dentro de una oracion - gradiente de marca + negrita, sin romper la lectura. */
+function NavLinkButton({ term, onTap }: { term: string; onTap: () => void }) {
   return (
-    <>
-      {text.slice(0, idx)}
-      <InfoTooltip term={RELACION_ACTIVA_TERM} definition={RELACION_ACTIVA_DEFINITION} />
-      {text.slice(idx + RELACION_ACTIVA_TERM.length)}
-    </>
+    <button
+      type="button"
+      onClick={onTap}
+      className="bg-gradient-to-r from-[#7C5CFC] to-[#4C7DFB] bg-clip-text font-bold text-transparent"
+    >
+      {term}
+    </button>
   );
+}
+
+function messageHighlights(
+  text: string,
+  navLinks: NavLink[] | undefined,
+  onNavTap: (term: string, action: string) => void
+): TextHighlight[] {
+  const highlights: TextHighlight[] = [
+    {
+      term: RELACION_ACTIVA_TERM,
+      render: () => (
+        <InfoTooltip term={RELACION_ACTIVA_TERM} definition={RELACION_ACTIVA_DEFINITION} />
+      ),
+    },
+  ];
+  for (const link of navLinks ?? []) {
+    highlights.push({
+      term: link.term,
+      render: () => (
+        <NavLinkButton term={link.term} onTap={() => onNavTap(link.term, link.action)} />
+      ),
+    });
+  }
+  return highlights;
 }
 
 function joinNatural(items: string[]): string {
@@ -108,7 +166,12 @@ async function callMia(payload: Record<string, unknown>) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Algo salio mal");
-  return data as { reply: string; ui: UiMessage[]; state: ClientState };
+  return data as {
+    reply: string;
+    ui: UiMessage[];
+    navLinks?: NavLink[];
+    state: ClientState;
+  };
 }
 
 function getPosition(): Promise<GeolocationPosition> {
@@ -218,12 +281,12 @@ export default function MiaChat() {
         }
       }
 
-      const { reply, ui, state } = await callMia(payload);
+      const { reply, ui, navLinks, state } = await callMia(payload);
       window.localStorage.setItem(REMEMBERED_PHONE_KEY, trimmed);
       if (state.profile?.locationPermissionGranted) rememberLocationGranted(trimmed);
       setPhone(trimmed);
       setSessionState(state);
-      pushMessage({ role: "assistant", text: reply, ui });
+      pushMessage({ role: "assistant", text: reply, ui, navLinks });
       setPhase("chatting");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Algo salio mal");
@@ -237,14 +300,14 @@ export default function MiaChat() {
     setLoading(true);
     setError(null);
     try {
-      const { reply, ui, state } = await callMia({
+      const { reply, ui, navLinks, state } = await callMia({
         phone,
         message,
         state: sessionState,
         ...extra,
       });
       setSessionState(state);
-      pushMessage({ role: "assistant", text: reply, ui });
+      pushMessage({ role: "assistant", text: reply, ui, navLinks });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Algo salio mal");
     } finally {
@@ -301,20 +364,26 @@ export default function MiaChat() {
     await sendTurn(text, { chipSelection: values });
   }
 
+  /** Enlace tocado dentro de un mensaje (ciudad/benefactor/categoria) - mismo mecanismo que un chip, sin chip visible. */
+  async function handleNavLinkTap(term: string, action: string) {
+    pushMessage({ role: "user", text: term });
+    await sendTurn(term, { chipSelection: [action] });
+  }
+
   async function handleCardSelect(id: string, title: string) {
     if (!sessionState) return;
     setLoading(true);
     setError(null);
     pushMessage({ role: "user", text: `Ver detalle: ${title}` });
     try {
-      const { reply, ui, state } = await callMia({
+      const { reply, ui, navLinks, state } = await callMia({
         phone,
         message: `Quiero ver el detalle de "${title}"`,
         state: sessionState,
         viewDetailId: id,
       });
       setSessionState(state);
-      pushMessage({ role: "assistant", text: reply, ui });
+      pushMessage({ role: "assistant", text: reply, ui, navLinks });
       const detail = ui.find((u): u is DetailSheetMessage => u.type === "detail_sheet");
       if (detail) setDetailMessage(detail);
     } catch (err) {
@@ -419,7 +488,7 @@ export default function MiaChat() {
                   }
                 >
                   <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
-                    {renderMessageText(m.text)}
+                    {renderRichText(m.text, messageHighlights(m.text, m.navLinks, handleNavLinkTap))}
                   </p>
                 </div>
               </div>
@@ -519,7 +588,11 @@ export default function MiaChat() {
       </div>
 
       {detailMessage && (
-        <DetailSheet message={detailMessage} onClose={() => setDetailMessage(null)} />
+        <DetailSheet
+          message={detailMessage}
+          userId={sessionState?.userId}
+          onClose={() => setDetailMessage(null)}
+        />
       )}
     </div>
   );

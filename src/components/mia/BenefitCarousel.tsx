@@ -1,4 +1,5 @@
 import type { CardCarouselMessage } from "@/lib/mia/uiMessages";
+import { Star } from "@/components/mia/RatingStars";
 
 export default function BenefitCarousel({
   message,
@@ -17,7 +18,7 @@ export default function BenefitCarousel({
           className="flex w-36 shrink-0 flex-col overflow-hidden rounded-2xl border border-zinc-100 bg-white text-left shadow-sm active:scale-[0.97]"
         >
           <div
-            className="flex h-20 w-full items-center justify-center text-white"
+            className="relative flex h-20 w-full items-center justify-center text-white"
             style={{ background: card.color }}
           >
             {card.thumbUrl ? (
@@ -31,6 +32,13 @@ export default function BenefitCarousel({
               <span className="text-2xl font-black opacity-80">
                 {card.title.charAt(0)}
               </span>
+            )}
+            {card.rating > 0 && (
+              <div className="absolute right-1 top-1 flex items-center gap-0.5 rounded-full bg-black/60 px-1 py-0.5">
+                {Array.from({ length: card.rating }).map((_, i) => (
+                  <Star key={i} filled size={9} />
+                ))}
+              </div>
             )}
           </div>
           <div className="px-2.5 py-2">
