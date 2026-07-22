@@ -66,6 +66,25 @@ export async function saveLocationPermission(userId: string) {
   }
 }
 
+/**
+ * Un evento por visita real (no por mensaje) - ver MiaChat.tsx para el
+ * gate de sessionStorage que evita duplicarlo en refrescos de pagina
+ * dentro de la misma visita. Uniforme para usuarios nuevos y que
+ * regresan, para poder calcular retencion (dia 1/7/30) comparando la
+ * primera ocurrencia de este evento por usuario contra las siguientes.
+ */
+export async function saveSessionStarted(userId: string) {
+  const { error } = await supabase.from("events").insert({
+    user_id: userId,
+    event_type: "session_started",
+  });
+  if (error) {
+    throw new Error(
+      `No se pudo registrar el evento session_started: ${error.message}`
+    );
+  }
+}
+
 export async function saveCity(
   userId: string,
   city: string,

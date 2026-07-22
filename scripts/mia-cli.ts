@@ -71,7 +71,9 @@ async function main() {
 
   const session = new OnboardingSession(phone);
 
-  let turn = await session.start();
+  // logVisit: false - este arnes de prueba no es una visita real, no debe
+  // ensuciar la analitica de retencion (session_started).
+  let turn = await session.start({ logVisit: false });
   console.log(`\nMIA: ${turn.reply}\n`);
   printUi(turn.ui);
 

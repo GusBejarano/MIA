@@ -25,6 +25,8 @@ type RequestBody = {
   detectedCity?: string;
   chipSelection?: string[];
   viewDetailId?: string;
+  /** false = esta visita ya registro session_started (mismo tab, solo un refresco) - ver MiaChat.tsx. Ausente/true = registrarlo. */
+  logVisit?: boolean;
 };
 
 export async function POST(req: NextRequest) {
@@ -43,6 +45,7 @@ export async function POST(req: NextRequest) {
     detectedCity,
     chipSelection,
     viewDetailId,
+    logVisit,
   } = body;
 
   if (!phone || typeof phone !== "string") {
@@ -60,7 +63,7 @@ export async function POST(req: NextRequest) {
     let navLinks: NavLink[] | undefined;
 
     if (!state) {
-      const turn = await session.start({ locationPermissionGranted, detectedCity });
+      const turn = await session.start({ locationPermissionGranted, detectedCity, logVisit });
       reply = turn.reply;
       ui = turn.ui;
       navLinks = turn.navLinks;

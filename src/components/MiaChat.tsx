@@ -58,6 +58,29 @@ function rememberLocationGranted(phone: string) {
   window.localStorage.setItem(LOCATION_GRANTED_KEY, JSON.stringify(map));
 }
 
+// "Una visita real = un evento session_started". A diferencia de
+// REMEMBERED_PHONE_KEY/LOCATION_GRANTED_KEY (localStorage, sobreviven
+// para siempre) esto usa sessionStorage a proposito: vive mientras la
+// pestana/ventana siga abierta y sobrevive a un refresco de pagina (no
+// duplica el evento), pero se vacia solo al cerrarla - la proxima vez
+// que el usuario abra MIA (aunque sea el mismo telefono) va a ser una
+// pestana nueva, con sessionStorage vacio, y por lo tanto una visita
+// nueva de verdad.
+const VISIT_LOGGED_KEY = "mia_visit_logged";
+
+/** true la primera vez que se llama en esta pestana; false en refrescos posteriores dentro de la misma visita. */
+function claimVisit(): boolean {
+  try {
+    if (window.sessionStorage.getItem(VISIT_LOGGED_KEY)) return false;
+    window.sessionStorage.setItem(VISIT_LOGGED_KEY, "1");
+    return true;
+  } catch {
+    // sessionStorage no disponible (ej. modo privado estricto) - mejor
+    // registrar la visita de mas que perderla del todo.
+    return true;
+  }
+}
+
 /**
  * Confirma en el navegador (no en nuestro registro) si el permiso de
  * geolocalizacion sigue concedido antes de invocarla en silencio - evita
@@ -260,7 +283,7 @@ export default function MiaChat() {
     setLoading(true);
     setError(null);
     try {
-      const payload: Record<string, unknown> = { phone: trimmed };
+      const payload: Record<string, unknown> = { phone: trimmed, logVisit: claimVisit() };
 
       // Si este dispositivo ya vio a este numero conceder el permiso antes,
       // intenta redetectar la ubicacion en segundo plano - sin mostrar el

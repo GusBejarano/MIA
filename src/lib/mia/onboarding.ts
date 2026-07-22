@@ -1,6 +1,7 @@
 import { miaConversation, type ChatMessage } from "./claudeClient";
 import { classifyOpenMessage } from "./tasks/classifyOpenMessage";
 import { matchOneFromList } from "./tasks/matchFromText";
+import { detectCityChange } from "./tasks/detectCityChange";
 import {
   getOrCreateUser,
   saveCity,
@@ -9,6 +10,7 @@ import {
   saveAffinity,
   saveProgramSelections,
   saveExposure,
+  saveSessionStarted,
   getRating,
   getRatingsForBenefits,
 } from "./store";
@@ -140,10 +142,25 @@ export class OnboardingSession {
    *   no"), se lo vuelve a pedir con el mismo mensaje de siempre.
    */
   async start(
-    opts: { locationPermissionGranted?: boolean; detectedCity?: string } = {}
+    opts: {
+      locationPermissionGranted?: boolean;
+      detectedCity?: string;
+      logVisit?: boolean;
+    } = {}
   ): Promise<Turn> {
     const user = await getOrCreateUser(this.phone);
     this.userId = user.id;
+
+    // Analitica de retencion (1 evento por visita real, ver MiaChat.tsx) -
+    // nunca debe poder romper el arranque de la conversacion si falla, asi
+    // que el error se registra pero no se propaga.
+    if (opts.logVisit ?? true) {
+      try {
+        await saveSessionStarted(this.userId);
+      } catch (err) {
+        console.error("No se pudo registrar session_started:", err);
+      }
+    }
 
     // La API de Claude exige al menos un mensaje en `messages` - el arranque
     // no tiene un turno de usuario todavia, asi que sembramos uno sintetico
@@ -256,6 +273,35 @@ export class OnboardingSession {
     this.history.push({ role: "assistant", content: LOCATION_DECLINED_MESSAGE });
     const cities = await getAvailableCities();
     return { reply: LOCATION_DECLINED_MESSAGE, ui: [this.cityChipMessage(cities)] };
+  }
+
+  /**
+   * Interpreta un texto libre (en cualquier etapa posterior a la
+   * ubicacion, no solo al inicio) como pedido de cambiar de ciudad.
+   * `rawCity` ya viene detectado por detectCityChange, pero sin validar -
+   * aca se hace coincidencia aproximada contra la cobertura real (mismo
+   * mecanismo que matchFromText.ts usa para benefactor/categoria). Si no
+   * hay match, nunca un error seco: se muestra el listado completo de
+   * ciudades (Paso 3.1), igual que cuando el usuario declina el permiso.
+   */
+  private async changeCity(rawCity: string): Promise<Turn> {
+    const cities = await getAvailableCities();
+    const matchedLabel = await matchOneFromList(
+      rawCity,
+      cities.map((c) => c.label)
+    );
+    const match = cities.find((c) => c.label === matchedLabel);
+
+    if (!match) {
+      return this.showCityChoice();
+    }
+
+    await saveCity(this.userId!, match.label, "manual");
+    this.profile.city = match.label;
+    this.profile.selectedBenefactors = undefined;
+    this.profile.selectedBenefactorName = undefined;
+    this.profile.selectedCategory = undefined;
+    return this.startBenefactorSelect(match.label, true);
   }
 
   /**
@@ -430,8 +476,13 @@ export class OnboardingSession {
     }
 
     if (!newId) {
+      // Se le pasa la lista real de benefactores con cobertura en esta
+      // ciudad explicitamente - sin esto, el LLM cae de vuelta a la lista
+      // generica del system prompt (Visa, Mastercard, etc.) aunque no
+      // tengan cobertura real ahi, y termina sugiriendo opciones que no
+      // existen (confirmado en pruebas de esta sesion).
       const reply = await this.emit(
-        `El usuario respondio "${userMessage}" sobre con cual benefactor tiene una relacion activa, pero eso no matchea con ninguno de los que tienen beneficios cargados ahora mismo (podria ser un benefactor real que simplemente no tiene beneficios cargados todavia, o algo que no se entendio). No asumas que lo agregaste ni digas "anotado" - dile con honestidad que por ahora no tienes beneficios de eso, y pide con amabilidad que elija de las opciones disponibles o lo escriba de otra forma.`
+        `El usuario respondio "${userMessage}" sobre con cual benefactor tiene una relacion activa, pero eso no matchea con ninguno de los que tienen beneficios cargados ahora mismo en ${this.profile.city}. Los UNICOS benefactores con beneficios activos ahi son: ${available.map((b) => b.name).join(", ")} - podria ser un benefactor real que simplemente no tiene beneficios cargados todavia, o algo que no se entendio. No asumas que lo agregaste ni digas "anotado", y no menciones ni sugieras ningun benefactor que no este en esa lista exacta - dile con honestidad que por ahora no tienes beneficios de eso, y pide con amabilidad que elija entre esos (solo esos) o lo escriba de otra forma.`
       );
       return { reply, ui: [this.benefactorChipMessage(available)] };
     }
@@ -635,10 +686,28 @@ export class OnboardingSession {
       // obsoleto) - sigue de largo y trata el mensaje como texto libre.
     }
 
-    const intent = await classifyOpenMessage(userMessage, {
-      benefactorNames: benefactores.map((b) => b.name),
-      categoryLabels: categorias.map((c) => c.label),
-    });
+    // Cambio de ciudad y clasificacion del resto de intenciones corren en
+    // paralelo (dos tareas de Haiku independientes) - el cambio de ciudad
+    // tiene prioridad si el mensaje habla de ambas cosas a la vez, porque
+    // invalida lo demas de todos modos.
+    const [cityChange, intent] = await Promise.all([
+      detectCityChange(userMessage, this.profile.city ?? ""),
+      classifyOpenMessage(userMessage, {
+        benefactorNames: benefactores.map((b) => b.name),
+        categoryLabels: categorias.map((c) => c.label),
+      }),
+    ]);
+
+    if (cityChange.changed && cityChange.newCity) {
+      return this.changeCity(cityChange.newCity);
+    }
+
+    if (intent.kind === "benefactor") {
+      const chosen = benefactores.find((b) => b.name === intent.label);
+      if (chosen) {
+        return this.resolveBenefactorSelect(userMessage, { chipSelection: [chosen.id] });
+      }
+    }
 
     if (intent.kind === "benefactors") {
       return this.resolveBenefactorSelect(userMessage, {});
@@ -661,10 +730,12 @@ export class OnboardingSession {
     if (intent.kind === "category") {
       const chosen = categorias.find((c) => c.label === intent.label);
       if (!chosen) {
+        // Nunca un error seco - se muestra el listado completo de
+        // categorias disponibles en vez de un callejon sin salida.
         const reply = await this.emit(
-          `El usuario pidio una categoria que ya no esta disponible. Dile con naturalidad que por ahora no tienes eso.`
+          `El usuario pidio una categoria que ya no esta disponible. Dile con naturalidad que por ahora no tienes eso, y que puede elegir de las que si estan disponibles.`
         );
-        return { reply, ui: [] };
+        return { reply, ui: [this.categoryChipMessage(categorias)] };
       }
       return this.showCarouselForCategory(chosen, benefactorIds);
     }
