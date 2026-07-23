@@ -119,6 +119,38 @@ function isKnownProfileFieldKey(key: string): key is ProfileFieldKey {
   return (KNOWN_PROFILE_FIELD_KEYS as readonly string[]).includes(key);
 }
 
+// Chips directos para la pregunta de gender - a diferencia de name/birth_date
+// (texto libre + confirmacion de un tap), tocar una de estas 3 opciones YA
+// es la confirmacion, mismo patron que elegir un benefactor/categoria por
+// chip (no hay paso de "Si/Declinar" despues). Solo 3 opciones (no las 4
+// que acepta el CHECK de users.gender) - "otro" queda disponible unicamente
+// si el usuario prefiere escribirlo por texto libre (allowFreeText sigue
+// activo, cae al flujo normal de interpretar+confirmar).
+const GENDER_CHIP_OPTIONS: { label: string; value: GenderValue }[] = [
+  { label: "Mujer", value: "femenino" },
+  { label: "Hombre", value: "masculino" },
+  { label: "No importa", value: "prefiero_no_decir" },
+];
+
+function genderChipMessage(): ChipSelectMessage {
+  return {
+    type: "chip_select",
+    options: GENDER_CHIP_OPTIONS.map((o) => ({
+      label: o.label,
+      value: o.value,
+      count: 0,
+      icon: "none" as const,
+    })),
+    multi: false,
+    allowFreeText: true,
+  };
+}
+
+/** UI adicional al preguntar un campo de perfil - solo `gender` trae chips (tap directo, sin confirmacion aparte); `name`/`birth_date` siguen siendo texto libre + confirmacion. */
+function profileFieldAskUi(fieldKey: ProfileFieldKey): UiMessage[] {
+  return fieldKey === "gender" ? [genderChipMessage()] : [];
+}
+
 /**
  * Mensaje fijo del primer contacto con la pantalla de benefactores - fijo
  * (no LLM) porque el termino "relacion activa" necesita coincidir
@@ -463,7 +495,7 @@ export class OnboardingSession {
         // pasar por el LLM (es copy de producto ya decidido).
         const reply = `${greeting}\n\n${pendingField.promptText}`;
         this.history.push({ role: "assistant", content: reply });
-        return { reply, ui: [] };
+        return { reply, ui: profileFieldAskUi(pendingField.fieldKey) };
       }
 
       const reply = await this.emit(
@@ -888,6 +920,15 @@ export class OnboardingSession {
     if (this.profile.pendingProfileConfirmation) {
       return this.resolveProfileConfirmation(chipSelection);
     }
+    if (this.profile.pendingProfileField === "gender" && chipSelection?.[0]) {
+      const tapped = GENDER_CHIP_OPTIONS.find((o) => o.value === chipSelection[0]);
+      if (tapped) {
+        return this.resolveGenderChipTap(tapped.value);
+      }
+      // chipSelection no coincide con ninguna opcion de gender (obsoleto o
+      // de otra pantalla) - sigue de largo y trata el mensaje como texto
+      // libre, mismo criterio que el resto de los chips de la app.
+    }
     if (this.profile.pendingProfileField) {
       return this.resolveProfileAnswer(userMessage);
     }
@@ -994,6 +1035,18 @@ export class OnboardingSession {
 Importante: en este turno NO tienes datos nuevos de beneficios reales. No inventes, nombres ni menciones ningun comercio, marca, descuento o categoria que no te haya sido dada explicitamente. No completes con conocimiento general sobre negocios reales.`
     );
     return { reply, ui: [] };
+  }
+
+  /**
+   * Tap directo en una de las 3 opciones de gender - a diferencia de
+   * name/birth_date, elegir el chip YA es la confirmacion (mismo patron que
+   * elegir un benefactor/categoria), no hay paso de "Si/Declinar" despues.
+   */
+  private async resolveGenderChipTap(value: GenderValue): Promise<Turn> {
+    this.profile.pendingProfileField = undefined;
+    await saveProfileFieldValue(this.userId!, "gender", value);
+    await recordProfileFieldAnswered(this.userId!, "gender");
+    return this.continueAfterProfileFlow(profileConfirmedAck("gender", value));
   }
 
   /**
