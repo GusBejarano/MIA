@@ -11,6 +11,7 @@ import SummaryCards from "@/components/mia/SummaryCards";
 import BenefitCarousel from "@/components/mia/BenefitCarousel";
 import DetailSheet from "@/components/mia/DetailSheet";
 import InfoTooltip from "@/components/mia/InfoTooltip";
+import Tip from "@/components/mia/Tip";
 
 type ClientState = {
   history: ChatMessage[];
@@ -33,6 +34,18 @@ type RenderMessage = {
 };
 
 let nextMessageId = 0;
+
+// Rota en el placeholder del input (nunca en el valor real) - puro
+// frontend, sin relacion con los estados de ensenar/recordar del
+// buscador de negocio (esos dependen de datos del backend, ver
+// onboarding.ts). Al menos un ejemplo de busqueda de negocio, para dar
+// una pista pasiva de la funcionalidad incluso a quien nunca ve el tip.
+const INPUT_PLACEHOLDER_EXAMPLES = [
+  "Escribe si algo no aparece...",
+  "¿Tienes descuento en Crepes & Waffles?",
+  "Ej: el gimnasio de la 5ta",
+];
+const PLACEHOLDER_ROTATION_MS = 4000;
 
 // Recuerda el ultimo telefono usado en ESTE dispositivo/navegador (nunca en
 // el servidor) para no hacerlo re-digitar - sigue pudiendo escribir otro.
@@ -238,12 +251,20 @@ export default function MiaChat() {
   const [error, setError] = useState<string | null>(null);
   const [detailMessage, setDetailMessage] = useState<DetailSheetMessage | null>(null);
   const [versionCopied, setVersionCopied] = useState(false);
+  const [placeholderIndex, setPlaceholderIndex] = useState(0);
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, loading]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setPlaceholderIndex((i) => (i + 1) % INPUT_PLACEHOLDER_EXAMPLES.length);
+    }, PLACEHOLDER_ROTATION_MS);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     // Leer localStorage en el initializer de useState causaria un mismatch
@@ -535,6 +556,7 @@ export default function MiaChat() {
                   {block.type === "card_carousel" && (
                     <BenefitCarousel message={block} onSelect={handleCardSelect} />
                   )}
+                  {block.type === "tip" && <Tip message={block} />}
                 </div>
               ))}
             </div>
@@ -579,7 +601,7 @@ export default function MiaChat() {
             <form onSubmit={handleSend} className="flex items-center gap-2">
               <input
                 type="text"
-                placeholder="Escribe si algo no aparece..."
+                placeholder={INPUT_PLACEHOLDER_EXAMPLES[placeholderIndex]}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 disabled={loading}

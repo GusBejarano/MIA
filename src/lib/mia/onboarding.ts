@@ -13,6 +13,12 @@ import {
   saveSessionStarted,
   getRating,
   getRatingsForBenefits,
+  getExposedBenefitIds,
+  getUserProgramIds,
+  getLastBusinessSearchAt,
+  markBusinessSearchUsed,
+  logBusinessSearchEvent,
+  getReminderThresholdDays,
 } from "./store";
 import {
   getAvailableBenefactors,
@@ -20,17 +26,21 @@ import {
   getAvailableCities,
   getBenefitsForCategory,
   getBenefitDetail,
+  getProgramNamesByIds,
   colorForId,
   type BenefactorOption,
   type CategoryOption,
   type CityOption,
 } from "./discovery";
+import { cityMatches } from "./cityMatch";
+import { findBusinessMatches } from "./businessSearch";
 import type {
   UiMessage,
   ChipSelectMessage,
   SummaryCardsMessage,
   CardCarouselMessage,
   DetailSheetMessage,
+  TipMessage,
   NavLink,
 } from "./uiMessages";
 import {
@@ -110,6 +120,8 @@ export type Profile = {
   /** Nombre para mostrar del benefactor en selectedBenefactors[0] - cacheado para no releer Supabase solo para armar un mensaje. */
   selectedBenefactorName?: string;
   selectedCategory?: { value: string; label: string };
+  /** Ya se mostro el tip de "recordar" el buscador de negocio en esta sesion (regreso) - evita repetirlo en cada detalle mientras siga vencido. Se reinicia solo con una sesion nueva de verdad (ver start()). */
+  remindTipShownThisSession?: boolean;
 };
 
 export type Turn = { reply: string; ui: UiMessage[]; navLinks?: NavLink[] };
@@ -622,6 +634,17 @@ export class OnboardingSession {
       return { reply, ui: [] };
     }
 
+    // Leidos ANTES de guardar la exposicion/actualizar last_business_search_at
+    // de este mismo turno - "primer beneficio explorado" necesita saber
+    // cuantas exposiciones habia antes de esta, y si este detalle llego
+    // via resolveBusinessSearch, last_business_search_at ya fue actualizado
+    // a "ahora" mas arriba en el mismo turno (por eso no se ofrece ensenar
+    // ni recordar justo despues de usarlo - ver maybeBusinessSearchTip).
+    const [priorExposures, lastBusinessSearchAt] = await Promise.all([
+      getExposedBenefitIds(this.userId!),
+      getLastBusinessSearchAt(this.userId!),
+    ]);
+
     await saveExposure(this.userId!, benefitId);
 
     const reply = await this.emit(
@@ -635,8 +658,127 @@ export class OnboardingSession {
     // que se arman con el perfil actual, sin volver a consultar la BD.
     const breadcrumb = `${this.profile.city} › ${this.profile.selectedBenefactorName ?? ""} › ${detail.tag}`;
 
-    const ui: DetailSheetMessage = { type: "detail_sheet", ...detail, tag: breadcrumb, rating };
-    return { reply, ui: [ui] };
+    const { sourceProgramId, ...detailRest } = detail;
+    const [programNames, userProgramIds] = await Promise.all([
+      getProgramNamesByIds([sourceProgramId]),
+      getUserProgramIds(this.userId!),
+    ]);
+    const relation = {
+      programId: sourceProgramId,
+      programName: programNames.get(sourceProgramId) ?? "",
+      hasRelation: userProgramIds.includes(sourceProgramId),
+    };
+
+    const ui: DetailSheetMessage = { type: "detail_sheet", ...detailRest, tag: breadcrumb, rating, relation };
+    const uiBlocks: UiMessage[] = [ui];
+
+    const tip = await this.maybeBusinessSearchTip(priorExposures.length === 0, lastBusinessSearchAt);
+    if (tip) uiBlocks.push(tip);
+
+    return { reply, ui: uiBlocks };
+  }
+
+  /**
+   * Decide si mostrar el tip de bajo perfil sobre el buscador de negocio,
+   * despues de ver un detalle de beneficio - "ensenar" una sola vez (nunca
+   * lo uso Y este es su primer beneficio explorado jamas), o "recordar" con
+   * moderacion (ya lo uso, pero hace mas dias que el umbral configurable en
+   * app_settings, y todavia no se lo mostramos en este regreso).
+   */
+  private async maybeBusinessSearchTip(
+    isFirstEverDetailView: boolean,
+    lastBusinessSearchAt: string | null
+  ): Promise<TipMessage | null> {
+    if (lastBusinessSearchAt === null) {
+      if (!isFirstEverDetailView) return null;
+      return {
+        type: "tip",
+        tone: "hint",
+        text: "La próxima vez, solo escríbeme el nombre de cualquier negocio y te digo si tienes descuento ahí.",
+      };
+    }
+
+    if (this.profile.remindTipShownThisSession) return null;
+
+    const thresholdDays = await getReminderThresholdDays();
+    const daysSince = (Date.now() - new Date(lastBusinessSearchAt).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSince <= thresholdDays) return null;
+
+    this.profile.remindTipShownThisSession = true;
+    return {
+      type: "tip",
+      tone: "reminder",
+      text: "Recuerda que puedes preguntarme por cualquier negocio directamente.",
+    };
+  }
+
+  /**
+   * Buscador de negocio por texto libre (Parte 1) - busca en 2 capas (ver
+   * businessSearch.ts) y ramifica segun cuantos resultados activos hay en
+   * la ciudad actual del usuario: 1 -> detalle directo, 2+ -> mini-carrusel
+   * con badge de relacion, 0 en la ciudad pero si en otra -> honesto sobre
+   * cobertura futura, 0 en cualquier ciudad -> honesto sobre que no existe.
+   * El intento en si (cualquiera de los 4 casos) marca last_business_search_at.
+   */
+  private async resolveBusinessSearch(query: string): Promise<Turn> {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      const reply = await this.emit(
+        `El usuario quiso preguntar por un negocio puntual pero no se entendio el nombre. Pide con amabilidad que lo escriba de nuevo.`
+      );
+      return { reply, ui: [] };
+    }
+
+    const matches = await findBusinessMatches(trimmed);
+    await markBusinessSearchUsed(this.userId!);
+
+    if (matches.length === 0) {
+      await logBusinessSearchEvent(this.userId!, "business_search_miss", trimmed);
+      const reply = await this.emit(
+        `El usuario pregunto si tiene descuento en "${trimmed}", pero ese negocio no existe en el catalogo, en ninguna ciudad. Dile con honestidad y respeto que por ahora no tienes ese negocio, sin inventar nada.`
+      );
+      return { reply, ui: [] };
+    }
+
+    const city = this.profile.city ?? "";
+    const inCity = matches.filter((m) => cityMatches(m.city, city));
+
+    if (inCity.length === 0) {
+      await logBusinessSearchEvent(this.userId!, "business_search_out_of_city", trimmed);
+      const reply = await this.emit(
+        `El usuario pregunto si tiene descuento en "${trimmed}". SI existe en el catalogo con descuento activo, pero todavia no en su ciudad actual (${city}) - existe en otra(s) ciudad(es). Dile con honestidad que ese negocio si tiene descuento pero todavia no ahi, sin prometer fecha ni inventar detalles del beneficio.`
+      );
+      return { reply, ui: [] };
+    }
+
+    if (inCity.length === 1) {
+      return this.viewBenefitDetail(inCity[0].id);
+    }
+
+    const programIds = [...new Set(inCity.map((m) => m.sourceProgramId))];
+    const [programNames, userProgramIds] = await Promise.all([
+      getProgramNamesByIds(programIds),
+      getUserProgramIds(this.userId!),
+    ]);
+
+    const reply = await this.emit(
+      `El usuario pregunto si tiene descuento en "${trimmed}" y hay ${inCity.length} opciones activas en ${city}. Dile con naturalidad que encontraste mas de una opcion y que elija cual le interesa - no listes los nombres en texto, los va a ver como tarjetas para tocar.`
+    );
+
+    const carousel: CardCarouselMessage = {
+      type: "card_carousel",
+      cards: inCity.map((m) => ({
+        id: m.id,
+        title: m.title,
+        tag: programNames.get(m.sourceProgramId) ?? "",
+        color: colorForId(m.sourceProgramId),
+        thumbUrl: m.imageUrl,
+        rating: 0,
+        relationBadge: userProgramIds.includes(m.sourceProgramId) ? "activa" : "sin_relacion",
+      })),
+    };
+
+    return { reply, ui: [carousel] };
   }
 
   /**
@@ -738,6 +880,10 @@ export class OnboardingSession {
         return { reply, ui: [this.categoryChipMessage(categorias)] };
       }
       return this.showCarouselForCategory(chosen, benefactorIds);
+    }
+
+    if (intent.kind === "business_search") {
+      return this.resolveBusinessSearch(intent.businessName);
     }
 
     // NINGUNA - conversacion normal, grounded, sin inventar nada.

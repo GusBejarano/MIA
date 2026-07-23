@@ -235,6 +235,70 @@ export async function getRatingsForBenefits(
   return ratings;
 }
 
+/** Momento del ultimo uso exitoso (con o sin match) del buscador de negocio, o null si nunca lo uso - fuente de verdad para el estado ensenar/recordar (ver onboarding.ts). */
+export async function getLastBusinessSearchAt(userId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("users")
+    .select("last_business_search_at")
+    .eq("id", userId)
+    .single();
+  if (error) {
+    throw new Error(`No se pudo leer last_business_search_at: ${error.message}`);
+  }
+  return (data?.last_business_search_at as string | null) ?? null;
+}
+
+/**
+ * Marca que el usuario uso el buscador de negocio - se llama en los 4
+ * resultados de la ramificacion (1 resultado, 2+, fuera de ciudad, no
+ * encontrado): el intento en si ya cuenta como "aprendido", no solo un
+ * match exitoso.
+ */
+export async function markBusinessSearchUsed(userId: string) {
+  const { error } = await supabase
+    .from("users")
+    .update({ last_business_search_at: new Date().toISOString() })
+    .eq("id", userId);
+  if (error) {
+    throw new Error(`No se pudo actualizar last_business_search_at: ${error.message}`);
+  }
+}
+
+/** Registra un intento de busqueda de negocio sin cobertura (fuera de ciudad o inexistente) - senal para el equipo de alianzas, sin accion automatica. */
+export async function logBusinessSearchEvent(
+  userId: string,
+  eventType: "business_search_miss" | "business_search_out_of_city",
+  query: string
+) {
+  const { error } = await supabase.from("events").insert({
+    user_id: userId,
+    event_type: eventType,
+    payload: { query },
+  });
+  if (error) {
+    throw new Error(`No se pudo registrar el evento ${eventType}: ${error.message}`);
+  }
+}
+
+const DEFAULT_REMINDER_DAYS = 30;
+
+/** Umbral (en dias) del tip de recordatorio del buscador de negocio - leido de app_settings para poder cambiarlo desde Supabase sin redeploy. */
+export async function getReminderThresholdDays(): Promise<number> {
+  const { data, error } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "business_search_reminder_days")
+    .maybeSingle();
+  if (error) {
+    throw new Error(`No se pudo leer app_settings: ${error.message}`);
+  }
+  const parsed = Number(data?.value);
+  // Fallback defensivo (nunca deberia usarse en un ambiente sano - la fila
+  // semilla ya existe) para que un valor ausente o corrupto en Supabase
+  // nunca rompa el flujo, solo caiga al default razonable.
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_REMINDER_DAYS;
+}
+
 /**
  * Fija la calificacion de un beneficio (1-3), o la borra si `rating` es 0 -
  * la tabla tiene `CHECK (rating IN (1,2,3))`, 0 no es un valor guardable.

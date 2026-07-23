@@ -48,6 +48,17 @@ export default function BenefitCarousel({
             <div className="line-clamp-2 text-xs font-bold leading-tight text-mia-ink">
               {card.title}
             </div>
+            {card.relationBadge && (
+              <span
+                className={
+                  card.relationBadge === "activa"
+                    ? "mt-1 inline-block rounded-md bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600"
+                    : "mt-1 inline-block rounded-md bg-zinc-100 px-1.5 py-0.5 text-[9px] font-bold text-zinc-500"
+                }
+              >
+                {card.relationBadge === "activa" ? "Relación activa" : "Sin relación aún"}
+              </span>
+            )}
             <div className="mt-1 text-[11px] font-bold text-mia-cyan">Ver más →</div>
           </div>
         </button>

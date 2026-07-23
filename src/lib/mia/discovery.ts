@@ -215,6 +215,7 @@ export type BenefitDetail = {
   photoUrl: string | null;
   details: { label: string; value: string }[];
   links: { go: string | null; web: string | null; social: string | null };
+  sourceProgramId: string;
 };
 
 const MONTHS_ES = [
@@ -231,7 +232,7 @@ export async function getBenefitDetail(benefitId: string): Promise<BenefitDetail
   const { data, error } = await supabase
     .from("benefits")
     .select(
-      "id, title, category, conditions, valid_until, image_url, company_url, social_media_url, how_to_get_there, address"
+      "id, title, category, conditions, valid_until, image_url, company_url, social_media_url, how_to_get_there, address, source_program_id"
     )
     .eq("id", benefitId)
     .maybeSingle();
@@ -260,7 +261,22 @@ export async function getBenefitDetail(benefitId: string): Promise<BenefitDetail
       web: (data.company_url as string) ?? null,
       social: (data.social_media_url as string) ?? null,
     },
+    sourceProgramId: data.source_program_id as string,
   };
+}
+
+/** Nombres de programas por id, para resolver benefactores cuando ya se tienen ids sueltos (ej. resultados del buscador de negocio, que no vienen agrupados por benefactor). */
+export async function getProgramNamesByIds(programIds: string[]): Promise<Map<string, string>> {
+  if (programIds.length === 0) return new Map();
+
+  const { data, error } = await supabase
+    .from("programs")
+    .select("id, name")
+    .in("id", programIds);
+  if (error) {
+    throw new Error(`No se pudieron resolver los programas: ${error.message}`);
+  }
+  return new Map((data ?? []).map((p) => [p.id as string, p.name as string]));
 }
 
 const DAILY_DETAIL_VIEW_LIMIT = 3;

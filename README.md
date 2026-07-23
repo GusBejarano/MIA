@@ -2,7 +2,7 @@
 
 Frontend y motor conversacional de MIA para [descuentosinteligentes.com](https://descuentosinteligentes.com), construido con Next.js (App Router) y desplegado en Netlify.
 
-Versión actual: **1.2.1**.
+Versión actual: **1.3.0** ("Casos Aplicados") — despliegue en curso solo a Dev.
 
 ## Stack
 
@@ -20,36 +20,41 @@ src/
     layout.tsx, globals.css      -> layout raíz y estilos base (Tailwind)
     api/mia/route.ts             -> POST: arranca/continúa una conversación (OnboardingSession)
     api/mia/rating/route.ts      -> POST: guarda/borra una calificación de 1-3 estrellas (fuera del flujo de turnos de chat)
+    api/mia/declare-relation/route.ts -> POST: declara relación activa con un benefactor desde el detalle (buscador de negocio), fuera del flujo de turnos de chat
   components/
-    MiaChat.tsx                  -> UI completa del chat: fase phone-gate, render de mensajes/enlaces/tooltips, geolocalización, sessionStorage/localStorage
+    MiaChat.tsx                  -> UI completa del chat: fase phone-gate, render de mensajes/enlaces/tooltips, geolocalización, sessionStorage/localStorage, rotación del placeholder del input
     mia/
       ChipSelect.tsx             -> chips tocables (single o multi-select), incluye el chip "Volver" con flecha en gradiente de marca
       SummaryCards.tsx           -> tarjetas resumen de benefactores elegidos
-      BenefitCarousel.tsx        -> carrusel horizontal de beneficios, con badge de calificación superpuesto
-      DetailSheet.tsx            -> hoja de detalle de un beneficio (estrellas, links condicionales)
+      BenefitCarousel.tsx        -> carrusel horizontal de beneficios, con badge de calificación y badge de relación (activa/sin_relacion) superpuestos
+      DetailSheet.tsx            -> hoja de detalle de un beneficio (estrellas, links condicionales, banner para declarar relación si no existe)
       RatingStars.tsx            -> sistema de calificación de 3 estrellas (también expone <Star> suelto para el badge del carrusel)
       InfoTooltip.tsx            -> tooltip con detección de colisiones (portal a document.body) para términos como "relación activa"
+      Tip.tsx                    -> tip de bajo perfil (ensenar/recordar el buscador de negocio), mismo patrón visual que "¿No ves el tuyo?"
   lib/mia/                       -> motor conversacional de MIA
     systemPrompt.ts              -> bloque de personalidad/tono/guardrails (prompt cacheado, `cache_control: ephemeral`)
     claudeClient.ts               -> wrapper de la Claude API (`miaConversation` = Sonnet, `miaTask` = Haiku)
     onboarding.ts                 -> OnboardingSession: máquina de estados del flujo completo (ver "Flujo conversacional" abajo)
     copy.ts                       -> copy fijo y códigos de navegación compartidos entre backend y frontend (términos con tooltip, acciones NAV_BACK_TO_*)
-    discovery.ts                   -> consultas de catálogo real: ciudades/benefactores/categorías/beneficios con cobertura activa, ranking de colores
-    uiMessages.ts                  -> contrato de tipos entre backend y frontend (chip_select, summary_cards, card_carousel, detail_sheet, NavLink)
+    discovery.ts                   -> consultas de catálogo real: ciudades/benefactores/categorías/beneficios con cobertura activa, ranking de colores, nombres de programa por id
+    businessSearch.ts               -> buscador de negocio en 2 capas: Capa 1 (pg_trgm sobre benefits.title, vía RPC) y Capa 2 (Haiku sobre conditions, solo si la Capa 1 no encuentra nada)
+    uiMessages.ts                  -> contrato de tipos entre backend y frontend (chip_select, summary_cards, card_carousel, detail_sheet, tip, NavLink)
     cityMatch.ts                   -> matching de ciudad contra el campo `city` (texto libre, puede traer varias separadas por coma)
     phoneHash.ts                    -> hashea el teléfono del usuario con BEDI_HASH_SALT (nunca se guarda en texto plano)
     supabaseClient.ts                -> cliente Supabase server-only (bloqueado si se importa desde el navegador)
-    store.ts                          -> toda la persistencia en Supabase (users, affinities, user_programs, benefit_exposures, benefit_ratings, events)
+    store.ts                          -> toda la persistencia en Supabase (users, affinities, user_programs, benefit_exposures, benefit_ratings, events, last_business_search_at, app_settings)
     tasks/
-      classifyOpenMessage.ts          -> Haiku: clasifica mensajes de conversación libre (BENEFACTOR:<nombre>, BENEFACTORES, CATEGORIAS, CATEGORIA:<nombre>, NINGUNA)
+      classifyOpenMessage.ts          -> Haiku: clasifica mensajes de conversación libre (BENEFACTOR:<nombre>, BENEFACTORES, CATEGORIAS, CATEGORIA:<nombre>, BUSCAR_NEGOCIO:<nombre>, NINGUNA)
       matchFromText.ts                 -> Haiku: matchea texto libre contra una lista real de opciones (benefactor/categoría/ciudad)
       detectCityChange.ts               -> Haiku: detecta si un mensaje libre indica cambio de ciudad (se combina con matchFromText para confirmar contra cobertura real)
+      findBusinessInConditions.ts        -> Haiku: Capa 2 del buscador de negocio, busca menciones de un negocio dentro de `conditions` (caso "paraguas")
 scripts/
   mia-cli.ts                      -> simulador de conversación por terminal, sin depender del navegador (`npm run chat`)
 supabase/
   2026.07.10-mia_supabase_schema_v1.sql       -> esquema base (users, affinities, programs, user_programs, benefits, benefit_exposures, events)
   2026.07.17-mia_location_permission.sql      -> agrega users.location_permission_granted + evento location_permission_granted
   2026.07.22-mia_session_started_event.sql    -> agrega el evento session_started (retención)
+  2026.07.22-mia_business_search_similarity_fn.sql -> función RPC de solo lectura que expone pg_trgm/similarity() sobre benefits.title vía PostgREST (necesaria porque el backend no tiene conexión Postgres directa, solo supabase-js)
   _diagnostico_grants.sql                      -> diagnóstico/fix de privilegios de service_role sobre el esquema public
 ```
 
@@ -66,6 +71,26 @@ La exploración es un flujo **guiado por UI** (chips de una sola selección + ca
 7. **Detalle del beneficio** — ruta de contexto completa (Ciudad › Benefactor › Categoría), calificación de 1-3 estrellas, links condicionales (Cómo llegar / Sitio web / Redes, cada uno solo si el dato existe).
 
 En cualquier punto posterior a la ubicación, el usuario puede **cambiar de ciudad, benefactor o categoría escribiendo texto libre** (ej. "muéstrame Cali", "y en Comfandi qué hay") — se interpreta con Haiku y se hace coincidencia aproximada contra la cobertura real; si no hay coincidencia, nunca se muestra un error seco, siempre el listado completo del nivel correspondiente.
+
+## Buscador de negocio (texto libre, 1.3.0)
+
+El usuario puede escribir el nombre de un negocio en cualquier punto de la conversación (ej. "¿tienes descuento en Crepes & Waffles?") y MIA responde si tiene descuento ahí. `classifyOpenMessage` lo reconoce como una intención más (`BUSCAR_NEGOCIO:<nombre>`), igual que ya reconoce benefactor/categoría — **ojo:** `detectCityChange` corre en paralelo con prioridad sobre esta clasificación (decisión preexistente, no de esta versión), así que un nombre de negocio que además sea un nombre de ciudad real puede interpretarse como cambio de ciudad en vez de búsqueda (ver nota en "Pruebas" abajo).
+
+**2 capas, en orden:**
+1. **Determinística (pg_trgm)** — similitud de trigramas contra `benefits.title`, vía la función RPC `search_benefits_by_title_similarity` (`supabase/2026.07.22-mia_business_search_similarity_fn.sql` — **hace falta aplicarla a mano en el SQL Editor de cada entorno**, PostgREST no puede invocar `similarity()` sin una función expuesta). Umbral `0.35`, calibrado contra casos reales del catálogo (ver "Pruebas").
+2. **Semántica (Haiku)** — solo si la Capa 1 no devuelve nada. Busca dentro de `conditions` de todos los beneficios activos, para el caso "paraguas" (`Aldea Asiática`, cuyo título no menciona los restaurantes reales `Fusion Wok`/`Uki`/`Baoku`/`Mo Sushi` que sí aparecen en el texto de condiciones).
+
+**Ramificación por ciudad** (con los resultados de cualquiera de las 2 capas, filtrados primero por la ciudad actual del usuario):
+- **1 resultado en la ciudad** → detalle directo (Paso 7). Si el usuario no tiene relación declarada con ese benefactor, el detalle muestra un banner tocable para declararla (escribe en `user_programs` vía `/api/mia/declare-relation`, mismo mecanismo que elegir un benefactor por chip).
+- **2+ resultados en la ciudad** → mini-carrusel (`BenefitCarousel`, mismo componente del carrusel de categoría) con un badge por tarjeta ("Relación activa" / "Sin relación aún").
+- **0 en la ciudad, pero sí en otra** → respuesta honesta sobre cobertura futura + evento `business_search_out_of_city`.
+- **0 en cualquier ciudad** → respuesta honesta de que no existe + evento `business_search_miss`.
+
+**Enseñanza del buscador**, después de ver el detalle de un beneficio (por cualquier vía):
+- **Ensenar** (tip gris, mismo patrón que "¿No ves el tuyo?"): una sola vez, en el primer beneficio que el usuario explora jamás, solo si nunca usó el buscador (`users.last_business_search_at IS NULL`).
+- **Recordar** (tip con más peso visual): si ya lo usó pero hace más días que `app_settings.business_search_reminder_days` (seed `30`, cambiable desde Supabase sin redeploy) — máximo una vez por regreso (sesión), no en cada detalle mientras siga vencido.
+
+El placeholder del input del chat rota entre 2-3 ejemplos (incluye uno de búsqueda de negocio) — puro frontend, sin relación con la lógica de ensenar/recordar de arriba.
 
 ## Cómo correrlo
 
@@ -106,20 +131,53 @@ Escribe `salir` para terminar y ver el perfil capturado en esa sesión.
 
 Las migraciones en `supabase/*.sql` son la fuente de verdad versionada — corren manualmente en el SQL Editor de Supabase (no hay CLI/CI conectado todavía). **Importante:** el esquema real ya tiene columnas en uso por el código que no están en ninguna migración versionada — quedaron creadas directo en el dashboard en algún momento:
 
-- `public.benefits`: además de lo que trae la migración base, el código lee `status`, `image_url`, `company_url`, `social_media_url`, `how_to_get_there`, `address`.
+- `public.benefits`: además de lo que trae la migración base, el código lee `status`, `image_url`, `company_url`, `social_media_url`, `how_to_get_there`, `address`, `research_source`.
 - `public.benefit_ratings` (calificación de 1-3 estrellas): no tiene migración versionada en este repo. Columnas: `id, user_id (FK users), benefit_id (FK benefits), rating (smallint, CHECK 1-3), created_at, updated_at`, único por `(user_id, benefit_id)`, trigger de `updated_at`, RLS activo.
+- `public.users.last_business_search_at` (timestamptz, nullable) y `public.users.level` (int, default `1`) — agregadas a mano para 1.3.0, tampoco tienen migración versionada en este repo.
+- `public.app_settings` (`key text primary key, value text, updated_at timestamptz`) — agregada a mano para 1.3.0, con la fila seed `business_search_reminder_days = '30'`. Cambiar `value` desde Supabase cambia el comportamiento del tip de recordatorio sin redeploy (ver "Buscador de negocio" arriba).
 
-Si tocas alguna de estas dos tablas, considera versionar una migración de "documentación" que capture el estado real, para que el repo deje de estar desincronizado del esquema vivo.
+Si tocas alguna de estas tablas/columnas, considera versionar una migración de "documentación" que capture el estado real, para que el repo deje de estar desincronizado del esquema vivo.
 
 ## Qué falta / limitaciones conocidas
 
 - **No hay persistencia de historial de conversación.** Los turnos de chat viven solo en el estado del navegador (`ClientState.history`, va y vuelve en cada request) — nunca se guardan en Supabase.
-- **`user_programs` y `benefit_exposures` se escriben pero nunca se vuelven a leer** (`getUserProgramIds`/`getExposedBenefitIds` en `store.ts` no tienen ningún caller). Un usuario que regresa vuelve a elegir benefactor desde cero, y puede volver a ver el mismo beneficio sin restricción — el tope diario de vistas (`DAILY_DETAIL_VIEW_LIMIT` en `discovery.ts`) está desactivado a propósito.
+- **Un usuario que regresa vuelve a elegir benefactor desde cero**, y puede volver a ver el mismo beneficio sin restricción — el tope diario de vistas (`DAILY_DETAIL_VIEW_LIMIT` en `discovery.ts`) está desactivado a propósito. (`getUserProgramIds`/`getExposedBenefitIds` en `store.ts` sí tienen caller desde 1.3.0 — los usa el buscador de negocio para el badge de relación y el tip de "primer beneficio explorado" — pero todavía no se usan para saltar pasos del flujo guiado por chips.)
 - **`name`, `age_range`, `gender` existen en `users` pero ningún flujo los captura todavía.**
 - **`affinities.weight` siempre es `1.0` fijo** — no hay señal real de intensidad de preferencia, solo de que la categoría se tocó alguna vez.
 - **No hay canal real de WhatsApp** — no hay webhook ni credenciales de ningún proveedor. El campo de "número de WhatsApp" en el phone-gate es solo un identificador que el usuario escribe a mano; identifica al usuario entre visitas web, no envía ni recibe mensajes de WhatsApp de verdad.
 - **Calidad de datos:** el campo `benefits.city` (texto libre) trae inconsistencias reales — ciudades duplicadas por acentuación (ej. "Tuluá"/"Tulua", "Jamundí"/"Jamundi") y al menos un valor que es un departamento, no una ciudad ("Valle del Cauca"). Vale la pena revisar la carga de datos de benefactores/beneficios.
-- Ver `auditoria-mia-2026.07.21.md` para el inventario completo (API de Claude, esquema, flujo de contexto por turno) y `notas-v1.3-2026.07.22.md` para el detalle de la última ronda de cambios (texto libre generalizado + evento `session_started` para medir retención).
+- **`users.level` es solo semilla de gamificación (1.3.0)** — la columna existe con default `1` y se confirmó que ningún flujo la sobreescribe, pero no hay ninguna mecánica de puntos/subida de nivel ni elemento de UI todavía.
+- **Un nombre de negocio que coincide con una ciudad real** (ej. un negocio literalmente llamado como una ciudad) puede resolverse como cambio de ciudad en vez de búsqueda de negocio — `detectCityChange` corre en paralelo con prioridad sobre `classifyOpenMessage` (decisión preexistente a 1.3.0). Edge case detectado durante las pruebas de esta versión, no resuelto todavía.
+- **La Capa 2 del buscador de negocio (Haiku sobre `conditions`) trae el catálogo activo completo en cada búsqueda sin match de título** — bien a la escala actual (~230 filas), pero no pagina ni acota por ciudad de antemano (a propósito, ver "Buscador de negocio" arriba); revisar si el catálogo crece mucho.
+- Ver `auditoria-mia-2026.07.21.md` para el inventario completo (API de Claude, esquema, flujo de contexto por turno) y `notas-v1.3-2026.07.22.md` para el detalle de la ronda anterior (texto libre generalizado + evento `session_started`). La mini auditoría de calidad de `benefits.title`/`conditions` que motivó el diseño de 2 capas del buscador de negocio de 1.3.0 se hizo en conversación, sin archivo versionado.
+
+## Pruebas — Buscador de negocio, enseñanza y gamificación (1.3.0)
+
+Corridas contra Supabase de Dev real (`OnboardingSession` invocada directamente, sin pasar por HTTP — mismo patrón que `scripts/mia-cli.ts`), con usuarios de prueba creados y borrados en cada corrida (`users`, `user_programs`, `benefit_exposures`, `events`, `affinities` limpios al final — verificado que no quedó ningún usuario de prueba). `npx tsc --noEmit`, `npx eslint src` y `npx next build` corren limpios.
+
+**Calibración del umbral de similitud (Capa 1, pg_trgm)** — contra casos reales del catálogo, con la función RPC ya aplicada:
+- `"Motos Honda"` → `Motos Honda (5%)` / `Motos Honda (8%)` en `0.86`; a `0.35` excluye correctamente el falso positivo `Mototrack` (`0.22`, sí aparecía a `0.2`).
+- `"Bodytech"`, `"Sushi Green"`, `"Sándwich Qbano"` (con y sin tilde/mayúsculas) → match exacto o cercano, estable en todo el rango `0.2`–`0.5`.
+- `"gimnasio"` (término genérico) → **sin resultados** a `0.35` — a `0.2`–`0.3` sí devolvía un match espurio (`Gimnasio club ready Roldanillo`, `0.30`). Confirma que `0.35` es el punto correcto: no pierde los casos "mixto" reales de la auditoría, pero descarta coincidencias genéricas débiles.
+- `"crepes y waffles"` (no existe en el catálogo) → sin resultados en ningún umbral, cae correctamente a la Capa 2 (que tampoco lo encuentra, ya que no existe).
+
+**Los 4 casos de ramificación** (usuario de prueba en Cali, ciudad con catálogo real de Comfandi + Comfenalco):
+- **1 resultado** (`"Sushi Green"`) → detalle directo, `relation.hasRelation = false` para un usuario nuevo. Declarar relación desde ahí escribió correctamente en `user_programs` (verificado con `getUserProgramIds`).
+- **2+ resultados** (`"Bodytech"`, que existe como fila propia en Comfandi *y* como `"Bodytech - Cali"` en Comfenalco) → mini-carrusel con 2 tarjetas, ambas con badge `sin_relacion` para un usuario nuevo.
+- **0 en la ciudad, sí en otra** (`"Encanto Jardin Musical"`, solo en Tuluá) → mensaje honesto sobre cobertura futura + 1 evento `business_search_out_of_city` registrado.
+- **0 en cualquier ciudad** (negocio inventado) → mensaje honesto de que no existe + 1 evento `business_search_miss` registrado.
+
+**Capa 2 (Haiku sobre `conditions`)** — `"Fusion Wok"` y `"Baoku"` (mencionados solo en el texto de condiciones de `Aldea Asiática`, no en su título) resolvieron correctamente al beneficio paraguas.
+
+**Tip "ensenar"** — apareció (`tone: "hint"`) en el primer beneficio jamás explorado por un usuario nuevo con `last_business_search_at IS NULL`; no se repitió en un segundo detalle dentro de la misma sesión.
+
+**Tip "recordar"** — con `last_business_search_at` simulado a 40 días (umbral seed `30`) apareció (`tone: "reminder"`) y no se repitió en un segundo detalle de la misma sesión/regreso. Con `last_business_search_at` a 2 días, no apareció ningún tip.
+
+**`app_settings.business_search_reminder_days` sin redeploy** — con el uso simulado a 5 días: con el umbral seed (`30`) no había tip; tras bajar `value` a `"3"` directamente en la tabla (mismo mecanismo que usaría alguien desde el dashboard de Supabase), el siguiente detalle mostró el tip de recordatorio, sin reiniciar el proceso. Se restauró `value` a su valor original al terminar la prueba.
+
+**`users.level`** — un usuario nuevo creado vía `getOrCreateUser` quedó con `level = 1` sin ningún cambio de código (el default de columna alcanza); confirmado que ningún flujo lo sobreescribe.
+
+**Edge case real encontrado (no corregido, ver "Qué falta"):** una primera versión de la prueba del caso "fuera de ciudad" usaba el negocio `"Centro de recreación Caicedonia"` — como `"Caicedonia"` es también una ciudad real con cobertura, `detectCityChange` (que corre en paralelo con prioridad, decisión preexistente) interpretó el mensaje como cambio de ciudad en vez de búsqueda de negocio, y cambió la ciudad del usuario de prueba a Caicedonia. Se cambió el caso de prueba a un negocio sin nombre de ciudad (`"Encanto Jardin Musical"`) para aislar la ramificación real, pero la ambigüedad de fondo sigue sin resolverse.
 
 ## Deploy
 

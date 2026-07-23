@@ -14,6 +14,26 @@ export default function DetailSheet({
   onClose: () => void;
 }) {
   const [rating, setRating] = useState(message.rating);
+  const [hasRelation, setHasRelation] = useState(message.relation.hasRelation);
+  const [declaring, setDeclaring] = useState(false);
+
+  async function handleDeclareRelation() {
+    if (!userId || declaring) return;
+    setDeclaring(true);
+    try {
+      const res = await fetch("/api/mia/declare-relation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, programId: message.relation.programId }),
+      });
+      if (!res.ok) throw new Error("No se pudo declarar la relacion");
+      setHasRelation(true);
+    } catch (err) {
+      console.error("No se pudo declarar la relacion:", err);
+    } finally {
+      setDeclaring(false);
+    }
+  }
 
   async function handleRate(next: number) {
     const previous = rating;
@@ -90,6 +110,19 @@ export default function DetailSheet({
             <p className="mt-2 text-sm leading-relaxed text-zinc-500">
               {message.description}
             </p>
+          )}
+
+          {!hasRelation && (
+            <button
+              type="button"
+              onClick={handleDeclareRelation}
+              disabled={declaring}
+              className="mt-3 w-full rounded-2xl border border-dashed border-mia-violet/40 bg-mia-violet/5 px-3 py-2.5 text-center text-xs font-bold text-mia-violet disabled:opacity-50"
+            >
+              {declaring
+                ? "Guardando..."
+                : `Toca si tienes una relación activa con ${message.relation.programName}`}
+            </button>
           )}
 
           {message.details.map((d, i) => (

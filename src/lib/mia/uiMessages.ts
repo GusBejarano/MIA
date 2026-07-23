@@ -46,6 +46,8 @@ export type CarouselCard = {
   thumbUrl: string | null;
   /** Calificacion (1-3) que el usuario ya le dio a este beneficio, o 0 si no lo ha calificado. */
   rating: number;
+  /** Solo presente en el mini-carrusel de resultados del buscador de negocio (2+ matches en la ciudad) - indica si el usuario ya declaro relacion con el benefactor de esta tarjeta. Ausente en el carrusel normal de categoria. */
+  relationBadge?: "activa" | "sin_relacion";
 };
 
 export type CardCarouselMessage = {
@@ -65,13 +67,23 @@ export type DetailSheetMessage = {
   links: { go: string | null; web: string | null; social: string | null };
   /** Calificacion (1-3) que el usuario ya le dio a este beneficio, o 0 si no lo ha calificado. */
   rating: number;
+  /** Benefactor de este beneficio y si el usuario ya declaro relacion con el - en el flujo guiado por chips siempre es true (elegir el chip ya la declara), pero un beneficio llegado por el buscador de negocio puede no tenerla todavia. */
+  relation: { programId: string; programName: string; hasRelation: boolean };
+};
+
+/** Tip de bajo perfil sobre el buscador de negocio - "hint" la primera vez que nunca lo uso, "reminder" cuando lo uso pero hace mas tiempo que el umbral configurado (ver app_settings.business_search_reminder_days). */
+export type TipMessage = {
+  type: "tip";
+  text: string;
+  tone: "hint" | "reminder";
 };
 
 export type UiMessage =
   | ChipSelectMessage
   | SummaryCardsMessage
   | CardCarouselMessage
-  | DetailSheetMessage;
+  | DetailSheetMessage
+  | TipMessage;
 
 /**
  * Enlace de navegacion dentro del texto de una respuesta (ej. el nombre de

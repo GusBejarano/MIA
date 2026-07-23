@@ -5,15 +5,17 @@ export type OpenMessageIntent =
   | { kind: "benefactors" }
   | { kind: "benefactor"; label: string }
   | { kind: "category_menu" }
-  | { kind: "category"; label: string };
+  | { kind: "category"; label: string }
+  | { kind: "business_search"; businessName: string };
 
 /**
- * Clasifica un mensaje de conversacion libre en una de 5 intenciones, para
+ * Clasifica un mensaje de conversacion libre en una de 6 intenciones, para
  * que MIA muestre la seleccion correspondiente (un benefactor puntual,
- * benefactores en general, menu de categorias, o el carrusel de una
- * categoria puntual) en vez de responder con texto - el texto solo se usa
- * cuando el mensaje de verdad no tiene que ver con nada de esto (charla,
- * agradecimientos, preguntas generales).
+ * benefactores en general, menu de categorias, el carrusel de una
+ * categoria puntual, o la busqueda de un negocio puntual por nombre) en
+ * vez de responder con texto - el texto solo se usa cuando el mensaje de
+ * verdad no tiene que ver con nada de esto (charla, agradecimientos,
+ * preguntas generales).
  * Tarea de Haiku 4.5, mismo patron que el resto de clasificadores.
  */
 export async function classifyOpenMessage(
@@ -40,12 +42,20 @@ Clasifica la intencion en EXACTAMENTE una de estas opciones:
   especifica de esta lista: ${categoryLabels.join(", ") || "(ninguna disponible todavia)"}
   (ej. si dice "algo de mascotas" y "Mascotas" esta en la lista, responde
   CATEGORIA:Mascotas).
-- NINGUNA: no tiene que ver con ver beneficios, categorias, benefactores o
-  ciudades (saludo, agradecimiento, pregunta general sobre como funciona
-  MIA, etc.) - tambien responde NINGUNA si el mensaje habla de cambiar de
-  CIUDAD (eso se clasifica aparte, no es tu trabajo).
+- BUSCAR_NEGOCIO:<nombre del negocio o comercio, tal cual lo escribio el
+  usuario o levemente limpio>: el usuario pregunta si tiene descuento en un
+  comercio/negocio especifico por su nombre propio, que NO coincide con
+  ningun benefactor ni categoria de las listas de arriba (ej. "tienes
+  descuento en Crepes & Waffles", "el gimnasio de la 5ta tiene algo?", "que
+  hay de Sushi Green" -> BUSCAR_NEGOCIO:Sushi Green). Si el nombre que
+  menciona SI coincide con un benefactor o categoria de las listas de
+  arriba, usa esa clasificacion en vez de esta.
+- NINGUNA: no tiene que ver con ver beneficios, categorias, benefactores,
+  ciudades o negocios puntuales (saludo, agradecimiento, pregunta general
+  sobre como funciona MIA, etc.) - tambien responde NINGUNA si el mensaje
+  habla de cambiar de CIUDAD (eso se clasifica aparte, no es tu trabajo).
 
-Responde EXACTAMENTE con una linea, uno de: NINGUNA / BENEFACTOR:<nombre> / BENEFACTORES / CATEGORIAS / CATEGORIA:<nombre>`;
+Responde EXACTAMENTE con una linea, uno de: NINGUNA / BENEFACTOR:<nombre> / BENEFACTORES / CATEGORIAS / CATEGORIA:<nombre> / BUSCAR_NEGOCIO:<nombre>`;
 
   const raw = (await miaTask(prompt)).trim();
   const upper = raw.toUpperCase();
@@ -62,6 +72,11 @@ Responde EXACTAMENTE con una linea, uno de: NINGUNA / BENEFACTOR:<nombre> / BENE
     const name = raw.slice(raw.indexOf(":") + 1).trim();
     const match = categoryLabels.find((c) => c.toLowerCase() === name.toLowerCase());
     return match ? { kind: "category", label: match } : { kind: "none" };
+  }
+
+  if (upper.startsWith("BUSCAR_NEGOCIO:")) {
+    const businessName = raw.slice(raw.indexOf(":") + 1).trim();
+    return businessName ? { kind: "business_search", businessName } : { kind: "none" };
   }
 
   return { kind: "none" };
