@@ -652,11 +652,6 @@ export class OnboardingSession {
     );
 
     const rating = await getRating(this.userId!, benefitId);
-    // Ruta de contexto (Ciudad › Benefactor › Categoria) en vez del tag
-    // plano - cualquier beneficio llegado hasta aca pertenece siempre a la
-    // ciudad y benefactor ya elegidos (el carrusel los filtra por eso), asi
-    // que se arman con el perfil actual, sin volver a consultar la BD.
-    const breadcrumb = `${this.profile.city} › ${this.profile.selectedBenefactorName ?? ""} › ${detail.tag}`;
 
     const { sourceProgramId, ...detailRest } = detail;
     const [programNames, userProgramIds] = await Promise.all([
@@ -668,6 +663,15 @@ export class OnboardingSession {
       programName: programNames.get(sourceProgramId) ?? "",
       hasRelation: userProgramIds.includes(sourceProgramId),
     };
+
+    // Ruta de contexto (Ciudad › Benefactor › Categoria) en vez del tag
+    // plano - el benefactor sale de `relation.programName` (recien resuelto
+    // arriba desde el beneficio real), no de `profile.selectedBenefactorName`:
+    // ese campo solo se llena en el flujo guiado por chips (se pisa al
+    // elegir el chip de benefactor), asi que un beneficio llegado por el
+    // buscador de negocio (1.3.0) lo dejaba vacio y el breadcrumb salia con
+    // un hueco ("Cali ›  › Categoria").
+    const breadcrumb = `${this.profile.city} › ${relation.programName} › ${detail.tag}`;
 
     const ui: DetailSheetMessage = { type: "detail_sheet", ...detailRest, tag: breadcrumb, rating, relation };
     const uiBlocks: UiMessage[] = [ui];
