@@ -1023,8 +1023,8 @@ Importante: en este turno NO tienes datos nuevos de beneficios reales. No invent
         {
           type: "chip_select",
           options: [
-            { label: "Sí", value: CONFIRM_PROFILE_FIELD, count: 0 },
-            { label: "Déjame pensarlo", value: DECLINE_PROFILE_FIELD, count: 0 },
+            { label: "Sí", value: CONFIRM_PROFILE_FIELD, count: 0, icon: "none" as const },
+            { label: "Déjame pensarlo", value: DECLINE_PROFILE_FIELD, count: 0, icon: "none" as const },
           ],
           multi: false,
           allowFreeText: false,

@@ -7,8 +7,12 @@ export type ChipOption = {
   value: string;
   count: number;
   color?: string;
-  /** Cuando esta presente, el chip muestra este icono en vez del contador. */
-  icon?: "back";
+  /**
+   * "back": el chip muestra la flecha de "Volver" en vez del contador.
+   * "none": el chip no muestra nada a la derecha (ni contador ni icono) -
+   * para opciones binarias tipo Si/Declinar donde un conteo no aplica.
+   */
+  icon?: "back" | "none";
 };
 
 export type ContextTab = {

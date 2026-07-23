@@ -80,9 +80,8 @@ export default function ChipSelect({
               }
             >
               {o.label}
-              {o.icon === "back" ? (
-                <BackIcon />
-              ) : (
+              {o.icon === "back" && <BackIcon />}
+              {o.icon === undefined && (
                 <span
                   className={
                     isSelected
