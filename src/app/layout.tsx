@@ -18,6 +18,17 @@ export const metadata: Metadata = {
   appleWebApp: {
     title: "MIA",
   },
+  other: {
+    // El campo appleWebApp de Next.js solo genera "mobile-web-app-capable"
+    // (sin el prefijo "apple-") - Safari en iOS necesita el tag legado CON
+    // el prefijo para tratar la pagina como app instalable (modo capable);
+    // sin el, "Agregar a inicio" la deja como marcador comun y usa el
+    // <title> completo en vez de apple-mobile-web-app-title, sin importar
+    // que ese meta tag este presente. Confirmado con el build: sin esta
+    // linea solo sale "mobile-web-app-capable", nunca la version con
+    // prefijo "apple-".
+    "apple-mobile-web-app-capable": "yes",
+  },
 };
 
 export default function RootLayout({
