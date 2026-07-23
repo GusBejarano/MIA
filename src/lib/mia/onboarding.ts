@@ -2,6 +2,7 @@ import { miaConversation, type ChatMessage } from "./claudeClient";
 import { classifyOpenMessage } from "./tasks/classifyOpenMessage";
 import { matchOneFromList } from "./tasks/matchFromText";
 import { detectCityChange } from "./tasks/detectCityChange";
+import { parseProfileAnswer, type ProfileFieldKey, type GenderValue } from "./tasks/parseProfileAnswer";
 import {
   getOrCreateUser,
   saveCity,
@@ -19,6 +20,10 @@ import {
   markBusinessSearchUsed,
   logBusinessSearchEvent,
   getReminderThresholdDays,
+  selectPendingProfileField,
+  recordProfileFieldAnswered,
+  recordProfileFieldDeclined,
+  saveProfileFieldValue,
 } from "./store";
 import {
   getAvailableBenefactors,
@@ -27,6 +32,7 @@ import {
   getBenefitsForCategory,
   getBenefitDetail,
   getProgramNamesByIds,
+  formatDateEs,
   colorForId,
   type BenefactorOption,
   type CategoryOption,
@@ -66,6 +72,52 @@ const LOCATION_DECLINED_MESSAGE = `Sin problema, entiendo. Aunque no compartiste
 // copy.ts) porque solo lo usa un chip, nunca un enlace de navegacion en
 // texto - el frontend nunca necesita conocerlo de antemano.
 const BACK_TO_LOCATION_PERMISSION = "__back_to_location_permission__";
+
+// Valores del chip Si/Declinar de la confirmacion de un campo de perfil
+// (aprendizaje progresivo, v1.4) - local por la misma razon que
+// BACK_TO_LOCATION_PERMISSION: solo los usa este chip puntual.
+const CONFIRM_PROFILE_FIELD = "__confirm_profile_field__";
+const DECLINE_PROFILE_FIELD = "__decline_profile_field__";
+
+const GENDER_LABEL_ES: Record<GenderValue, string> = {
+  femenino: "femenino",
+  masculino: "masculino",
+  otro: "otro",
+  prefiero_no_decir: "prefiero no decir",
+};
+
+/**
+ * Pregunta de confirmacion de un tap antes de guardar un campo de perfil -
+ * fija (no LLM) porque el valor interpretado tiene que aparecer tal cual se
+ * va a guardar, sin parafraseo que pueda introducir ambiguedad.
+ */
+function profileConfirmationQuestion(fieldKey: ProfileFieldKey, value: string): string {
+  switch (fieldKey) {
+    case "name":
+      return `¿Quieres que de ahora en adelante me dirija a ti como ${value}?`;
+    case "gender":
+      return `¿Confirmas que prefieres que me dirija a ti como ${GENDER_LABEL_ES[value as GenderValue]}?`;
+    case "birth_date":
+      return `¿Confirmas que tu fecha de nacimiento es ${formatDateEs(value)}?`;
+  }
+}
+
+/** Frase corta al confirmar un campo de perfil - se antepone al mensaje de benefactores (continueAfterProfileFlow). */
+function profileConfirmedAck(fieldKey: ProfileFieldKey, value: string): string {
+  switch (fieldKey) {
+    case "name":
+      return `¡Listo! Te voy a llamar ${value} de ahora en adelante.`;
+    case "gender":
+      return `Anotado, gracias por contármelo.`;
+    case "birth_date":
+      return `¡Genial, ya quedó guardado! Te tendré algo especial ese día.`;
+  }
+}
+
+const KNOWN_PROFILE_FIELD_KEYS: readonly ProfileFieldKey[] = ["name", "gender", "birth_date"];
+function isKnownProfileFieldKey(key: string): key is ProfileFieldKey {
+  return (KNOWN_PROFILE_FIELD_KEYS as readonly string[]).includes(key);
+}
 
 /**
  * Mensaje fijo del primer contacto con la pantalla de benefactores - fijo
@@ -122,6 +174,17 @@ export type Profile = {
   selectedCategory?: { value: string; label: string };
   /** Ya se mostro el tip de "recordar" el buscador de negocio en esta sesion (regreso) - evita repetirlo en cada detalle mientras siga vencido. Se reinicia solo con una sesion nueva de verdad (ver start()). */
   remindTipShownThisSession?: boolean;
+  /** Campo de perfil (aprendizaje progresivo, v1.4) que se le acaba de preguntar - el proximo mensaje libre del usuario se interpreta como su respuesta a ESTE campo, no como conversacion normal. */
+  pendingProfileField?: ProfileFieldKey;
+  /** Valor ya interpretado de un campo de perfil, esperando el tap de confirmacion (Si/Declinar) antes de guardarlo. */
+  pendingProfileConfirmation?: { fieldKey: ProfileFieldKey; value: string };
+  /**
+   * Se pregunto (o se iba a preguntar) un campo de perfil en este regreso -
+   * "maximo una cosa extra por regreso": mientras sea true, el tip del
+   * buscador de negocio no se muestra en esta sesion, sin importar su
+   * propia logica de ensenar/recordar (ver maybeBusinessSearchTip).
+   */
+  profileLearningActiveThisSession?: boolean;
 };
 
 export type Turn = { reply: string; ui: UiMessage[]; navLinks?: NavLink[] };
@@ -384,6 +447,25 @@ export class OnboardingSession {
     this.stage = "benefactor_select";
 
     if (returning) {
+      // Aprendizaje progresivo del perfil (v1.4) - a lo sumo un campo
+      // pendiente por regreso, y ocupa el unico "extra" de esta sesion
+      // (suprime el tip del buscador de negocio, ver maybeBusinessSearchTip).
+      const pendingField = await selectPendingProfileField(this.userId!);
+      if (pendingField && isKnownProfileFieldKey(pendingField.fieldKey)) {
+        this.profile.profileLearningActiveThisSession = true;
+        this.profile.pendingProfileField = pendingField.fieldKey;
+
+        const greeting = await miaConversation(
+          this.history,
+          `El usuario regresa (ya habia concedido el permiso de ubicacion antes) y esta en ${city}, que si tiene cobertura. Saludalo con calidez reconociendo la continuidad, en una sola frase breve - no repitas el onboarding, no vuelvas a pedir el permiso de ubicacion, y no hagas ninguna otra pregunta ni menciones benefactores todavia (eso viene despues, en otro mensaje aparte).`
+        );
+        // prompt_text va tal cual esta en profile_learning_fields, sin
+        // pasar por el LLM (es copy de producto ya decidido).
+        const reply = `${greeting}\n\n${pendingField.promptText}`;
+        this.history.push({ role: "assistant", content: reply });
+        return { reply, ui: [] };
+      }
+
       const reply = await this.emit(
         `El usuario regresa (ya habia concedido el permiso de ubicacion antes) y esta en ${city}, que si tiene cobertura. Saludalo con calidez reconociendo la continuidad, sin repetir el onboarding ni volver a pedir el permiso de ubicacion. Luego pide que elija con cual de sus benefactores tiene una relacion activa (una sola opcion) - lo va a ver como opciones para tocar, no hace falta que las listes en texto.`
       );
@@ -693,6 +775,11 @@ export class OnboardingSession {
     isFirstEverDetailView: boolean,
     lastBusinessSearchAt: string | null
   ): Promise<TipMessage | null> {
+    // "Maximo una cosa extra por regreso" (v1.4): si en este regreso ya se
+    // pregunto (o se iba a preguntar) un campo de perfil, el tip del
+    // buscador de negocio no se muestra, sin importar su propia logica.
+    if (this.profile.profileLearningActiveThisSession) return null;
+
     if (lastBusinessSearchAt === null) {
       if (!isFirstEverDetailView) return null;
       return {
@@ -795,6 +882,16 @@ export class OnboardingSession {
    * cuando el mensaje de verdad no tiene que ver con nada de esto).
    */
   private async freeChat(userMessage: string, chipSelection?: string[]): Promise<Turn> {
+    // Aprendizaje progresivo del perfil (v1.4) - si se acaba de preguntar un
+    // campo, este turno es exclusivamente la respuesta (o el tap de
+    // confirmacion) a ESE campo, nunca conversacion/seleccion normal.
+    if (this.profile.pendingProfileConfirmation) {
+      return this.resolveProfileConfirmation(chipSelection);
+    }
+    if (this.profile.pendingProfileField) {
+      return this.resolveProfileAnswer(userMessage);
+    }
+
     if (chipSelection?.[0] === NAV_BACK_TO_CITY_CHOICE) {
       return this.showCityChoice();
     }
@@ -897,6 +994,77 @@ export class OnboardingSession {
 Importante: en este turno NO tienes datos nuevos de beneficios reales. No inventes, nombres ni menciones ningun comercio, marca, descuento o categoria que no te haya sido dada explicitamente. No completes con conocimiento general sobre negocios reales.`
     );
     return { reply, ui: [] };
+  }
+
+  /**
+   * Interpreta la respuesta libre del usuario al campo de perfil que se le
+   * acaba de preguntar. Si trae un valor usable, pide confirmacion de un tap
+   * antes de guardar nada; si no (declina, o la respuesta no sirve), cuenta
+   * como intento fallido y sigue directo a los benefactores - nunca se
+   * vuelve a preguntar el mismo campo en esta sesion.
+   */
+  private async resolveProfileAnswer(userMessage: string): Promise<Turn> {
+    const fieldKey = this.profile.pendingProfileField!;
+    this.profile.pendingProfileField = undefined;
+
+    const value = await parseProfileAnswer(fieldKey, userMessage);
+
+    if (value === null) {
+      await recordProfileFieldDeclined(this.userId!, fieldKey);
+      return this.continueAfterProfileFlow("Sin problema, no hay afán.");
+    }
+
+    this.profile.pendingProfileConfirmation = { fieldKey, value };
+    const reply = profileConfirmationQuestion(fieldKey, value);
+    this.history.push({ role: "assistant", content: reply });
+    return {
+      reply,
+      ui: [
+        {
+          type: "chip_select",
+          options: [
+            { label: "Sí", value: CONFIRM_PROFILE_FIELD, count: 0 },
+            { label: "Déjame pensarlo", value: DECLINE_PROFILE_FIELD, count: 0 },
+          ],
+          multi: false,
+          allowFreeText: false,
+        },
+      ],
+    };
+  }
+
+  /** Resuelve el tap de confirmacion (Si/Declinar) de un campo de perfil ya interpretado. */
+  private async resolveProfileConfirmation(chipSelection?: string[]): Promise<Turn> {
+    const pending = this.profile.pendingProfileConfirmation!;
+    this.profile.pendingProfileConfirmation = undefined;
+
+    const confirmed = chipSelection?.[0] === CONFIRM_PROFILE_FIELD;
+
+    if (confirmed) {
+      await saveProfileFieldValue(this.userId!, pending.fieldKey, pending.value);
+      await recordProfileFieldAnswered(this.userId!, pending.fieldKey);
+      return this.continueAfterProfileFlow(profileConfirmedAck(pending.fieldKey, pending.value));
+    }
+
+    await recordProfileFieldDeclined(this.userId!, pending.fieldKey);
+    return this.continueAfterProfileFlow("Sin problema, no hay afán.");
+  }
+
+  /** Cierra el sub-flujo de aprendizaje de perfil y retoma la pantalla de benefactores que se difirio para no mostrar dos cosas a la vez. */
+  private async continueAfterProfileFlow(leadIn: string): Promise<Turn> {
+    const benefactores = await getAvailableBenefactors(this.profile.city!);
+
+    if (benefactores.length === 0) {
+      this.stage = "done";
+      const reply = await this.emit(
+        `${leadIn} Ademas, no hay benefactores con beneficios cargados en ${this.profile.city} todavia. Dile con naturalidad y respeto que por ahora no tienes nada ahi, sin inventar, y confirma que le avisaras apenas haya algo.`
+      );
+      return { reply, ui: [] };
+    }
+
+    const reply = `${leadIn} ¿Con cuál de tus benefactores tienes una relación activa?`;
+    this.history.push({ role: "assistant", content: reply });
+    return { reply, ui: [this.benefactorChipMessage(benefactores)] };
   }
 
   private async emit(instruction: string): Promise<string> {

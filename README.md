@@ -2,7 +2,7 @@
 
 Frontend y motor conversacional de MIA para [descuentosinteligentes.com](https://descuentosinteligentes.com), construido con Next.js (App Router) y desplegado en Netlify.
 
-Versión actual: **1.3.0** ("Casos Aplicados") — despliegue en curso solo a Dev.
+Versión actual: **1.4.0** (aprendizaje progresivo del perfil) — despliegue en curso solo a Dev.
 
 ## Stack
 
@@ -48,6 +48,7 @@ src/
       matchFromText.ts                 -> Haiku: matchea texto libre contra una lista real de opciones (benefactor/categoría/ciudad)
       detectCityChange.ts               -> Haiku: detecta si un mensaje libre indica cambio de ciudad (se combina con matchFromText para confirmar contra cobertura real)
       findBusinessInConditions.ts        -> Haiku: Capa 2 del buscador de negocio, busca menciones de un negocio dentro de `conditions` (caso "paraguas")
+      parseProfileAnswer.ts               -> interpreta la respuesta libre a un campo de perfil pendiente (gender/birth_date vía Haiku, name trivial) - null si no trae un valor usable
 scripts/
   mia-cli.ts                      -> simulador de conversación por terminal, sin depender del navegador (`npm run chat`)
 supabase/
@@ -92,6 +93,17 @@ El usuario puede escribir el nombre de un negocio en cualquier punto de la conve
 
 El placeholder del input del chat rota entre 2-3 ejemplos (incluye uno de búsqueda de negocio) — puro frontend, sin relación con la lógica de ensenar/recordar de arriba.
 
+## Aprendizaje progresivo del perfil (1.4.0)
+
+En el mensaje de bienvenida de un usuario **que regresa** (nunca en su primera visita/onboarding), MIA pregunta como máximo **un** campo de perfil pendiente, en el orden de `profile_learning_fields.priority` (seed: `name` → `gender` → `birth_date`), saltando los que ya fueron contestados o declinados 3 veces (`user_profile_learning_state`).
+
+- **Selección del campo**: el primero, en orden de prioridad, sin fila en `user_profile_learning_state` (nunca preguntado) o con `answered = false` y `attempts < 3`. Si no queda ninguno, no se pregunta nada de perfil.
+- **La pregunta usa `prompt_text` tal cual está en la tabla** — nunca pasa por el LLM (solo el saludo que la antecede sí es generado, para variar el tono sin arriesgar la redacción exacta de la pregunta).
+- **Confirmación de un tap antes de guardar**: la respuesta libre del usuario se interpreta (texto tal cual para `name`; Haiku mapea sinónimos/coloquialismos a los 4 valores válidos de `gender`; Haiku extrae y normaliza una fecha para `birth_date`, validando que sea real, pasada y no absurda) y se muestra como pregunta de confirmación (`Sí` / `Déjame pensarlo`, sin texto libre). Solo al tocar "Sí" se guarda en la columna real de `users` y se marca `answered = true`.
+- **Declinar o responder algo no usable** incrementa `attempts` (crea la fila con `attempts = 1` si no existía) y no se vuelve a preguntar ese campo en la misma sesión — el siguiente regreso ya sigue con el campo elegible de la prioridad correspondiente.
+- **`birth_date` no dispara ninguna lógica de `age_range` en el código** — el trigger de Postgres ya aplicado la deriva sola al guardar la columna.
+- **Máximo una "cosa extra" por regreso**: si hay un campo de perfil elegible, se pregunta y **se suprime el tip del buscador de negocio (hint o recordatorio) durante el resto de esa sesión**, sin importar su propia lógica de umbral — nunca aparecen los dos. La pantalla de benefactores que normalmente acompaña el saludo de regreso se difiere hasta que el sub-flujo de perfil se resuelve (confirmado o declinado), para no mostrar la pregunta de perfil y los chips de benefactor al mismo tiempo.
+
 ## Cómo correrlo
 
 ```bash
@@ -135,6 +147,10 @@ Las migraciones en `supabase/*.sql` son la fuente de verdad versionada — corre
 - `public.benefit_ratings` (calificación de 1-3 estrellas): no tiene migración versionada en este repo. Columnas: `id, user_id (FK users), benefit_id (FK benefits), rating (smallint, CHECK 1-3), created_at, updated_at`, único por `(user_id, benefit_id)`, trigger de `updated_at`, RLS activo.
 - `public.users.last_business_search_at` (timestamptz, nullable) y `public.users.level` (int, default `1`) — agregadas a mano para 1.3.0, tampoco tienen migración versionada en este repo.
 - `public.app_settings` (`key text primary key, value text, updated_at timestamptz`) — agregada a mano para 1.3.0, con la fila seed `business_search_reminder_days = '30'`. Cambiar `value` desde Supabase cambia el comportamiento del tip de recordatorio sin redeploy (ver "Buscador de negocio" arriba).
+- `public.users.birth_date` (date, nullable, con un trigger que deriva `age_range` automáticamente al guardarse) — agregada a mano para 1.4.0.
+- `public.profile_learning_fields` (`field_key text, priority int, prompt_text text, active boolean`) — agregada a mano para 1.4.0, sembrada con `name` (prioridad 1), `gender` (2), `birth_date` (3).
+- `public.user_profile_learning_state` (`user_id, field_key, answered boolean, attempts int, updated_at`) — agregada a mano para 1.4.0, sin filas semilla (se crea una fila por usuario/campo la primera vez que se declina o se pregunta).
+- `public.users.whatsapp_number` (text, nullable) — agregada a mano. Guarda el número tal cual lo escribió el usuario (sin normalizar), en paralelo a `phone_hash` (que sigue siendo la única fuente de verdad de identidad). Escritura de mejor esfuerzo en `getOrCreateUser` (`store.ts`) — si falla, solo se loguea, nunca bloquea el registro/reconocimiento del usuario. Puramente informativo para consulta administrativa directa en Supabase: **nunca se lee, muestra ni usa desde la app.**
 
 Si tocas alguna de estas tablas/columnas, considera versionar una migración de "documentación" que capture el estado real, para que el repo deje de estar desincronizado del esquema vivo.
 
@@ -149,6 +165,7 @@ Si tocas alguna de estas tablas/columnas, considera versionar una migración de 
 - **`users.level` es solo semilla de gamificación (1.3.0)** — la columna existe con default `1` y se confirmó que ningún flujo la sobreescribe, pero no hay ninguna mecánica de puntos/subida de nivel ni elemento de UI todavía.
 - **Un nombre de negocio que coincide con una ciudad real** (ej. un negocio literalmente llamado como una ciudad) puede resolverse como cambio de ciudad en vez de búsqueda de negocio — `detectCityChange` corre en paralelo con prioridad sobre `classifyOpenMessage` (decisión preexistente a 1.3.0). Edge case detectado durante las pruebas de esta versión, no resuelto todavía.
 - **La Capa 2 del buscador de negocio (Haiku sobre `conditions`) trae el catálogo activo completo en cada búsqueda sin match de título** — bien a la escala actual (~230 filas), pero no pagina ni acota por ciudad de antemano (a propósito, ver "Buscador de negocio" arriba); revisar si el catálogo crece mucho.
+- **Los campos de aprendizaje de perfil (`name`/`gender`/`birth_date`) están hardcodeados en código** (`parseProfileAnswer.ts`, `onboarding.ts`) para saber cómo interpretar y confirmar cada uno — la selección de CUÁL preguntar sí es 100% data-driven (`profile_learning_fields`), pero agregar un campo nuevo (rol actual, estado civil, hijos, vehículo propio — documentados como fuera de alcance de 1.4.0) sí requiere código nuevo (parser + copy de confirmación + columna en `users`), no es solo sembrar una fila.
 - Ver `auditoria-mia-2026.07.21.md` para el inventario completo (API de Claude, esquema, flujo de contexto por turno) y `notas-v1.3-2026.07.22.md` para el detalle de la ronda anterior (texto libre generalizado + evento `session_started`). La mini auditoría de calidad de `benefits.title`/`conditions` que motivó el diseño de 2 capas del buscador de negocio de 1.3.0 se hizo en conversación, sin archivo versionado.
 
 ## Pruebas — Buscador de negocio, enseñanza y gamificación (1.3.0)
@@ -178,6 +195,18 @@ Corridas contra Supabase de Dev real (`OnboardingSession` invocada directamente,
 **`users.level`** — un usuario nuevo creado vía `getOrCreateUser` quedó con `level = 1` sin ningún cambio de código (el default de columna alcanza); confirmado que ningún flujo lo sobreescribe.
 
 **Edge case real encontrado (no corregido, ver "Qué falta"):** una primera versión de la prueba del caso "fuera de ciudad" usaba el negocio `"Centro de recreación Caicedonia"` — como `"Caicedonia"` es también una ciudad real con cobertura, `detectCityChange` (que corre en paralelo con prioridad, decisión preexistente) interpretó el mensaje como cambio de ciudad en vez de búsqueda de negocio, y cambió la ciudad del usuario de prueba a Caicedonia. Se cambió el caso de prueba a un negocio sin nombre de ciudad (`"Encanto Jardin Musical"`) para aislar la ramificación real, pero la ambigüedad de fondo sigue sin resolverse.
+
+**Corrección post-lanzamiento (misma corrida de 1.3.0):** un usuario real reportó que el detalle de un beneficio llegado por el buscador de negocio mostraba el breadcrumb con un hueco ("Cali ›  › Acondicionamiento físico") — `profile.selectedBenefactorName` solo se llena en el flujo guiado por chips, así que un beneficio abierto vía el buscador lo dejaba vacío. Se reprodujo el caso exacto (`"tienes descuentos en Gym"` → carrusel con 2 negocios reales llamados "Gym Pro", uno de Comfandi y otro de Comfenalco → detalle de cualquiera de los dos) y se corrigió usando `relation.programName` (ya resuelto desde el propio beneficio) en vez del campo de perfil. Verificado con el mismo caso real tras el fix.
+
+## Pruebas — Aprendizaje progresivo del perfil (1.4.0)
+
+Mismo método que las pruebas de 1.3.0 (`OnboardingSession` invocada directamente contra Supabase de Dev, usuarios de prueba creados y borrados en cada corrida — incluyendo `user_profile_learning_state`, verificado sin residuos). `npx tsc --noEmit`, `npx eslint src` y `npx next build` corren limpios.
+
+- **Usuario nuevo, primer regreso** → se le preguntó `name` (prioridad 1) con el `prompt_text` exacto de la tabla, sin chips. Al responder "Gus" y confirmar con "Sí": `users.name` quedó en `"Gus"`, `user_profile_learning_state` marcó `name.answered = true`, y el **siguiente regreso** (nueva sesión, mismo teléfono) preguntó `gender` (prioridad 2) — la progresión entre campos funciona.
+- **3 declinaciones seguidas** (3 regresos distintos, respondiendo algo y tocando "Déjame pensarlo" cada vez) → `attempts` quedó en `3`, `answered` en `false`; el **4to regreso** ya no volvió a preguntar `name` y pasó directo a `gender` — confirma que `attempts < 3` saca el campo de la selección para siempre, sin flag adicional.
+- **`birth_date` con fecha real** (`"15 de marzo de 1990"`, interpretada y confirmada) → `users.birth_date` quedó en `1990-03-15` y `users.age_range` se derivó solo (`"36 a 50"`), sin ningún código de la app tocando esa columna — el trigger ya aplicado hizo el trabajo.
+- **Campo de perfil pendiente + recordatorio de negocio también vencido** (`last_business_search_at` simulado a 40 días) → solo apareció la pregunta de perfil en el saludo; al completar el sub-flujo y navegar hasta ver el detalle de un beneficio en la misma sesión, el tip de recordatorio de negocio **no apareció** — confirma que un campo de perfil elegible ocupa el único "extra" del regreso.
+- **Usuario con los 3 campos ya contestados** (marcados `answered = true` directamente, sin pasar por el flujo conversacional) → el saludo de regreso no preguntó nada de perfil y mostró los chips de benefactor de una, como el flujo pre-1.4.0; con `last_business_search_at` vencido, el tip de recordatorio de negocio **sí apareció** normalmente — confirma que la supresión es exclusiva de cuando hay de verdad un campo pendiente.
 
 ## Deploy
 

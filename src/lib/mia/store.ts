@@ -32,11 +32,42 @@ export async function getOrCreateUser(phone: string): Promise<UserProfile> {
       `No se pudo crear/recuperar el usuario en Supabase: ${error?.message}`
     );
   }
+
+  const userId = data.id as string;
+
+  // Guardado adicional de mejor esfuerzo, solo para consulta administrativa
+  // directa en Supabase (users.whatsapp_number) - nunca debe poder romper
+  // ni bloquear el reconocimiento/creacion del usuario si falla. No
+  // reemplaza ni toca nada del flujo de phone_hash (reconocimiento entre
+  // visitas, prellenado), corre aparte y en paralelo a el.
+  try {
+    await saveWhatsappNumber(userId, phone);
+  } catch (err) {
+    console.error("No se pudo guardar whatsapp_number (no bloqueante):", err);
+  }
+
   return {
-    id: data.id as string,
+    id: userId,
     city: (data.city as string | null) ?? null,
     locationPermissionGranted: Boolean(data.location_permission_granted),
   };
+}
+
+/**
+ * Guarda el numero tal cual lo escribio el usuario (sin normalizar, con o
+ * sin "+57") en users.whatsapp_number - solo para consulta administrativa
+ * directa en Supabase, nunca se lee ni se muestra desde la app. No es la
+ * fuente de verdad de identidad (eso sigue siendo phone_hash); es
+ * puramente informativo.
+ */
+export async function saveWhatsappNumber(userId: string, rawPhone: string) {
+  const { error } = await supabase
+    .from("users")
+    .update({ whatsapp_number: rawPhone })
+    .eq("id", userId);
+  if (error) {
+    throw new Error(`No se pudo guardar whatsapp_number: ${error.message}`);
+  }
 }
 
 /**
@@ -324,5 +355,126 @@ export async function setRating(userId: string, benefitId: string, rating: numbe
     );
   if (error) {
     throw new Error(`No se pudo guardar la calificacion: ${error.message}`);
+  }
+}
+
+// ------------------------------------------------------------
+// Aprendizaje progresivo del perfil (v1.4, Gap 1)
+// ------------------------------------------------------------
+
+export type ProfileLearningField = {
+  fieldKey: string;
+  priority: number;
+  promptText: string;
+};
+
+/** Campos activos de profile_learning_fields, en orden de prioridad. */
+export async function getActiveProfileLearningFields(): Promise<ProfileLearningField[]> {
+  const { data, error } = await supabase
+    .from("profile_learning_fields")
+    .select("field_key, priority, prompt_text")
+    .eq("active", true)
+    .order("priority", { ascending: true });
+  if (error) {
+    throw new Error(`No se pudieron consultar profile_learning_fields: ${error.message}`);
+  }
+  return (data ?? []).map((r) => ({
+    fieldKey: r.field_key as string,
+    priority: r.priority as number,
+    promptText: r.prompt_text as string,
+  }));
+}
+
+type ProfileLearningState = { fieldKey: string; answered: boolean; attempts: number };
+
+async function getProfileLearningState(userId: string): Promise<ProfileLearningState[]> {
+  const { data, error } = await supabase
+    .from("user_profile_learning_state")
+    .select("field_key, answered, attempts")
+    .eq("user_id", userId);
+  if (error) {
+    throw new Error(`No se pudo consultar user_profile_learning_state: ${error.message}`);
+  }
+  return (data ?? []).map((r) => ({
+    fieldKey: r.field_key as string,
+    answered: r.answered as boolean,
+    attempts: r.attempts as number,
+  }));
+}
+
+/**
+ * Primer campo elegible en orden de prioridad: sin fila en
+ * user_profile_learning_state (nunca preguntado), o con fila
+ * `answered = false` y `attempts < 3`. `null` si no queda ninguno
+ * (todos contestados o los 3 intentos agotados).
+ */
+export async function selectPendingProfileField(
+  userId: string
+): Promise<ProfileLearningField | null> {
+  const [fields, states] = await Promise.all([
+    getActiveProfileLearningFields(),
+    getProfileLearningState(userId),
+  ]);
+  const stateByField = new Map(states.map((s) => [s.fieldKey, s]));
+
+  for (const field of fields) {
+    const state = stateByField.get(field.fieldKey);
+    if (!state) return field;
+    if (!state.answered && state.attempts < 3) return field;
+  }
+  return null;
+}
+
+/** Marca un campo como contestado y confirmado - queda fuera de la seleccion para siempre, sin importar `attempts`. */
+export async function recordProfileFieldAnswered(userId: string, fieldKey: string) {
+  const { error } = await supabase
+    .from("user_profile_learning_state")
+    .upsert(
+      { user_id: userId, field_key: fieldKey, answered: true },
+      { onConflict: "user_id,field_key" }
+    );
+  if (error) {
+    throw new Error(`No se pudo marcar ${fieldKey} como contestado: ${error.message}`);
+  }
+}
+
+/**
+ * Registra un intento no exitoso (el usuario declino, o su respuesta no
+ * traia un valor usable) - suma 1 a `attempts`, crea la fila con
+ * `attempts = 1` si no existia. Lectura + escritura (no atomico a nivel
+ * de fila): aceptable porque solo un usuario, en su propia conversacion
+ * secuencial, escribe su propia fila - no hay escritura concurrente real.
+ */
+export async function recordProfileFieldDeclined(userId: string, fieldKey: string) {
+  const { data: existing, error: readError } = await supabase
+    .from("user_profile_learning_state")
+    .select("attempts")
+    .eq("user_id", userId)
+    .eq("field_key", fieldKey)
+    .maybeSingle();
+  if (readError) {
+    throw new Error(`No se pudo leer el estado de ${fieldKey}: ${readError.message}`);
+  }
+
+  const nextAttempts = ((existing?.attempts as number | undefined) ?? 0) + 1;
+  const { error } = await supabase
+    .from("user_profile_learning_state")
+    .upsert(
+      { user_id: userId, field_key: fieldKey, answered: false, attempts: nextAttempts },
+      { onConflict: "user_id,field_key" }
+    );
+  if (error) {
+    throw new Error(`No se pudo registrar el intento de ${fieldKey}: ${error.message}`);
+  }
+}
+
+/** Guarda el valor confirmado en la columna real de `users` - field_key coincide 1:1 con el nombre de columna (name/gender/birth_date). */
+export async function saveProfileFieldValue(userId: string, fieldKey: string, value: string) {
+  const { error } = await supabase
+    .from("users")
+    .update({ [fieldKey]: value })
+    .eq("id", userId);
+  if (error) {
+    throw new Error(`No se pudo guardar ${fieldKey}: ${error.message}`);
   }
 }

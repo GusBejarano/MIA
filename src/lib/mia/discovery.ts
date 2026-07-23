@@ -223,7 +223,7 @@ const MONTHS_ES = [
   "jul", "ago", "sep", "oct", "nov", "dic",
 ];
 
-function formatDateEs(isoDate: string): string {
+export function formatDateEs(isoDate: string): string {
   const [year, month, day] = isoDate.split("-").map(Number);
   return `${day} ${MONTHS_ES[month - 1]} ${year}`;
 }
