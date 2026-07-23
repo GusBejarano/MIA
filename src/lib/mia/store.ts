@@ -385,12 +385,17 @@ export async function getActiveProfileLearningFields(): Promise<ProfileLearningF
   }));
 }
 
-type ProfileLearningState = { fieldKey: string; answered: boolean; attempts: number };
+type ProfileLearningState = {
+  fieldKey: string;
+  answered: boolean;
+  attempts: number;
+  updatedAt: string | null;
+};
 
 async function getProfileLearningState(userId: string): Promise<ProfileLearningState[]> {
   const { data, error } = await supabase
     .from("user_profile_learning_state")
-    .select("field_key, answered, attempts")
+    .select("field_key, answered, attempts, updated_at")
     .eq("user_id", userId);
   if (error) {
     throw new Error(`No se pudo consultar user_profile_learning_state: ${error.message}`);
@@ -399,14 +404,19 @@ async function getProfileLearningState(userId: string): Promise<ProfileLearningS
     fieldKey: r.field_key as string,
     answered: r.answered as boolean,
     attempts: r.attempts as number,
+    updatedAt: (r.updated_at as string | null) ?? null,
   }));
 }
 
 /**
- * Primer campo elegible en orden de prioridad: sin fila en
- * user_profile_learning_state (nunca preguntado), o con fila
- * `answered = false` y `attempts < 3`. `null` si no queda ninguno
- * (todos contestados o los 3 intentos agotados).
+ * Campo elegible siguiente en la rotacion name -> gender -> birth_date ->
+ * name -> ... : de los campos activos que TODAVIA NO ESTAN CONTESTADOS
+ * (sin fila, o con `answered = false` - ya no importa cuantos `attempts`
+ * lleve, declinar nunca descarta un campo para siempre), elige el que
+ * lleva mas tiempo sin preguntarse - los nunca preguntados (sin fila)
+ * cuentan como "los mas atrasados de todos", y entre varios nunca
+ * preguntados se desempata por prioridad (asi un usuario nuevo siempre
+ * arranca en `name`). `null` solo cuando los 3 ya estan contestados.
  */
 export async function selectPendingProfileField(
   userId: string
@@ -417,20 +427,65 @@ export async function selectPendingProfileField(
   ]);
   const stateByField = new Map(states.map((s) => [s.fieldKey, s]));
 
-  for (const field of fields) {
-    const state = stateByField.get(field.fieldKey);
-    if (!state) return field;
-    if (!state.answered && state.attempts < 3) return field;
-  }
-  return null;
+  const pending = fields.filter((f) => !stateByField.get(f.fieldKey)?.answered);
+  if (pending.length === 0) return null;
+
+  pending.sort((a, b) => {
+    const updatedA = stateByField.get(a.fieldKey)?.updatedAt;
+    const updatedB = stateByField.get(b.fieldKey)?.updatedAt;
+    const timeA = updatedA ? new Date(updatedA).getTime() : -1;
+    const timeB = updatedB ? new Date(updatedB).getTime() : -1;
+    if (timeA !== timeB) return timeA - timeB;
+    return a.priority - b.priority;
+  });
+
+  return pending[0];
 }
 
-/** Marca un campo como contestado y confirmado - queda fuera de la seleccion para siempre, sin importar `attempts`. */
+/**
+ * Registra que se le acaba de preguntar un campo - bump de `updated_at` a
+ * ahora, preservando `attempts`/`answered` si ya existia una fila. Se
+ * llama al PREGUNTAR (no solo al confirmar/declinar): si no se hiciera
+ * aca, un usuario que responde algo interpretable (dispara la
+ * confirmacion) pero nunca la resuelve (abandona el chat) dejaria ese
+ * campo marcado como "nunca preguntado" - empataria en la rotacion con
+ * campos de verdad nunca preguntados y podria volver a salir antes de
+ * tiempo, rompiendo el ciclo name -> gender -> birth_date -> name -> ...
+ */
+export async function recordProfileFieldAsked(userId: string, fieldKey: string) {
+  const { data: existing, error: readError } = await supabase
+    .from("user_profile_learning_state")
+    .select("attempts, answered")
+    .eq("user_id", userId)
+    .eq("field_key", fieldKey)
+    .maybeSingle();
+  if (readError) {
+    throw new Error(`No se pudo leer el estado de ${fieldKey}: ${readError.message}`);
+  }
+
+  const { error } = await supabase
+    .from("user_profile_learning_state")
+    .upsert(
+      {
+        user_id: userId,
+        field_key: fieldKey,
+        answered: (existing?.answered as boolean | undefined) ?? false,
+        attempts: (existing?.attempts as number | undefined) ?? 0,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,field_key" }
+    );
+  if (error) {
+    throw new Error(`No se pudo registrar que se pregunto ${fieldKey}: ${error.message}`);
+  }
+}
+
+/** Marca un campo como contestado y confirmado - queda fuera de la rotacion para siempre. */
 export async function recordProfileFieldAnswered(userId: string, fieldKey: string) {
   const { error } = await supabase
     .from("user_profile_learning_state")
     .upsert(
-      { user_id: userId, field_key: fieldKey, answered: true },
+      { user_id: userId, field_key: fieldKey, answered: true, updated_at: new Date().toISOString() },
       { onConflict: "user_id,field_key" }
     );
   if (error) {
@@ -439,11 +494,13 @@ export async function recordProfileFieldAnswered(userId: string, fieldKey: strin
 }
 
 /**
- * Registra un intento no exitoso (el usuario declino, o su respuesta no
- * traia un valor usable) - suma 1 a `attempts`, crea la fila con
- * `attempts = 1` si no existia. Lectura + escritura (no atomico a nivel
- * de fila): aceptable porque solo un usuario, en su propia conversacion
- * secuencial, escribe su propia fila - no hay escritura concurrente real.
+ * Registra que se pregunto el campo y el usuario declino (o su respuesta
+ * no traia un valor usable) - suma 1 a `attempts` (solo informativo, ya no
+ * descarta el campo) y actualiza `updated_at` a ahora, para que la
+ * rotacion le de la vuelta a los otros 2 campos antes de volver a
+ * preguntar este. Lectura + escritura (no atomico a nivel de fila):
+ * aceptable porque solo un usuario, en su propia conversacion secuencial,
+ * escribe su propia fila - no hay escritura concurrente real.
  */
 export async function recordProfileFieldDeclined(userId: string, fieldKey: string) {
   const { data: existing, error: readError } = await supabase
@@ -460,7 +517,13 @@ export async function recordProfileFieldDeclined(userId: string, fieldKey: strin
   const { error } = await supabase
     .from("user_profile_learning_state")
     .upsert(
-      { user_id: userId, field_key: fieldKey, answered: false, attempts: nextAttempts },
+      {
+        user_id: userId,
+        field_key: fieldKey,
+        answered: false,
+        attempts: nextAttempts,
+        updated_at: new Date().toISOString(),
+      },
       { onConflict: "user_id,field_key" }
     );
   if (error) {

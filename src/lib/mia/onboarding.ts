@@ -21,6 +21,7 @@ import {
   logBusinessSearchEvent,
   getReminderThresholdDays,
   selectPendingProfileField,
+  recordProfileFieldAsked,
   recordProfileFieldAnswered,
   recordProfileFieldDeclined,
   saveProfileFieldValue,
@@ -486,6 +487,9 @@ export class OnboardingSession {
       if (pendingField && isKnownProfileFieldKey(pendingField.fieldKey)) {
         this.profile.profileLearningActiveThisSession = true;
         this.profile.pendingProfileField = pendingField.fieldKey;
+        // Se registra AL PREGUNTAR (no solo al confirmar/declinar) - ver el
+        // comentario de recordProfileFieldAsked en store.ts.
+        await recordProfileFieldAsked(this.userId!, pendingField.fieldKey);
 
         const greeting = await miaConversation(
           this.history,
