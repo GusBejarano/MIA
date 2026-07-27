@@ -23,10 +23,12 @@ src/
     api/mia/declare-relation/route.ts -> POST: declara relación activa con un benefactor desde el detalle (buscador de negocio), fuera del flujo de turnos de chat
   components/
     MiaChat.tsx                  -> UI completa del chat: fase phone-gate, render de mensajes/enlaces/tooltips, geolocalización, sessionStorage/localStorage, rotación del placeholder del input
+    InstallPrompt.tsx            -> banner de "agregar a inicio" (Android: prompt nativo; iOS: instrucciones, Safari no tiene esa API) - montado en layout.tsx, no en MiaChat
     mia/
       ChipSelect.tsx             -> chips tocables (single o multi-select), incluye el chip "Volver" con flecha en gradiente de marca
       SummaryCards.tsx           -> tarjetas resumen de benefactores elegidos
       BenefitCarousel.tsx        -> carrusel horizontal de beneficios, con badge de calificación y badge de relación (activa/sin_relacion) superpuestos
+      BenefitThumbnail.tsx       -> miniatura de beneficio compartida (carrusel + detalle): fallback de color determinístico por título si no hay foto o falla (onError), fondo desenfocado + imagen completa sin recortar si la proporción no calza con el marco (logos cuadrados, capturas)
       DetailSheet.tsx            -> hoja de detalle de un beneficio (estrellas, links condicionales, banner para declarar relación si no existe)
       RatingStars.tsx            -> sistema de calificación de 3 estrellas (también expone <Star> suelto para el badge del carrusel)
       InfoTooltip.tsx            -> tooltip con detección de colisiones (portal a document.body) para términos como "relación activa"
@@ -36,13 +38,15 @@ src/
     claudeClient.ts               -> wrapper de la Claude API (`miaConversation` = Sonnet, `miaTask` = Haiku)
     onboarding.ts                 -> OnboardingSession: máquina de estados del flujo completo (ver "Flujo conversacional" abajo)
     copy.ts                       -> copy fijo y códigos de navegación compartidos entre backend y frontend (términos con tooltip, acciones NAV_BACK_TO_*)
-    discovery.ts                   -> consultas de catálogo real: ciudades/benefactores/categorías/beneficios con cobertura activa, ranking de colores, nombres de programa por id
+    discovery.ts                   -> consultas de catálogo real vía funciones RPC (ver "Crecimiento del catálogo" abajo): ciudades/benefactores/categorías/beneficios con cobertura activa, nombres de programa por id
+    colorPalette.ts                 -> paleta de acentos de marca + hash determinístico por string, compartida entre discovery.ts (color de benefactor, server) y BenefitThumbnail.tsx (color de fallback, cliente) - modulo sin imports, safe para ambos lados
     businessSearch.ts               -> buscador de negocio en 2 capas: Capa 1 (pg_trgm sobre benefits.title, vía RPC) y Capa 2 (Haiku sobre conditions, solo si la Capa 1 no encuentra nada)
     uiMessages.ts                  -> contrato de tipos entre backend y frontend (chip_select, summary_cards, card_carousel, detail_sheet, tip, NavLink)
-    cityMatch.ts                   -> matching de ciudad contra el campo `city` (texto libre, puede traer varias separadas por coma)
+    cityMatch.ts                   -> matching de ciudad por sufijo (texto libre) - usado hoy solo en el buscador de negocio (resultado ya acotado); getAvailableBenefactors/Cities/Categories/BenefitsForCategory ya no lo usan, migraron a las RPC de cobertura (1.5.0)
     phoneHash.ts                    -> hashea el teléfono del usuario con BEDI_HASH_SALT (nunca se guarda en texto plano)
     supabaseClient.ts                -> cliente Supabase server-only (bloqueado si se importa desde el navegador)
     store.ts                          -> toda la persistencia en Supabase (users, affinities, user_programs, benefit_exposures, benefit_ratings, events, last_business_search_at, app_settings)
+    timing.ts                          -> instrumentacion de timing opcional (MIA_DEBUG_TIMING=true) - ver "Tiempos de respuesta" abajo
     tasks/
       classifyOpenMessage.ts          -> Haiku: clasifica mensajes de conversación libre (BENEFACTOR:<nombre>, BENEFACTORES, CATEGORIAS, CATEGORIA:<nombre>, BUSCAR_NEGOCIO:<nombre>, NINGUNA)
       matchFromText.ts                 -> Haiku: matchea texto libre contra una lista real de opciones (benefactor/categoría/ciudad)
@@ -56,6 +60,11 @@ supabase/
   2026.07.17-mia_location_permission.sql      -> agrega users.location_permission_granted + evento location_permission_granted
   2026.07.22-mia_session_started_event.sql    -> agrega el evento session_started (retención)
   2026.07.22-mia_business_search_similarity_fn.sql -> función RPC de solo lectura que expone pg_trgm/similarity() sobre benefits.title vía PostgREST (necesaria porque el backend no tiene conexión Postgres directa, solo supabase-js)
+  2026.07.27-mia_session_started_dedup.sql    -> constraint de exclusión (ventana de 30s por user_id) que bloquea session_started duplicado a nivel de Postgres, sin consultas extra (1.5.0)
+  2026.07.27-mia_session_started_cleanup_preflight.sql -> limpieza puntual de duplicados ya existentes antes de aplicar la constraint de arriba (1.5.0)
+  2026.07.27-mia_coverage_indexes_and_view.sql -> columnas generadas city_list/category_list + índices GIN + vista materializada de cobertura + funciones RPC de cobertura (1.5.0, ver "Crecimiento del catálogo" abajo)
+  2026.07.27-mia_city_accent_normalization.sql -> normaliza comparación de ciudad sin tildes (unaccent) + limpieza de datos existentes (Tuluá/Jamundí) (1.5.0)
+  2026.07.27-mia_geographic_hierarchy.sql      -> tabla city_regions (ciudad → departamento → país) + jerarquía de cobertura + trigger de sincronización (1.5.0, ver "Crecimiento del catálogo" abajo)
   _diagnostico_grants.sql                      -> diagnóstico/fix de privilegios de service_role sobre el esquema public
 ```
 
@@ -106,6 +115,37 @@ En el mensaje de bienvenida de un usuario **que regresa** (nunca en su primera v
 - **`birth_date` no dispara ninguna lógica de `age_range` en el código** — el trigger de Postgres ya aplicado la deriva sola al guardar la columna.
 - **Máximo una "cosa extra" por regreso**: si hay un campo de perfil elegible, se pregunta y **se suprime el tip del buscador de negocio (hint o recordatorio) durante el resto de esa sesión**, sin importar su propia lógica de umbral — nunca aparecen los dos. La pantalla de benefactores que normalmente acompaña el saludo de regreso se difiere hasta que el sub-flujo de perfil se resuelve (confirmado, declinado, o resuelto por chip), para no mostrar la pregunta de perfil y los chips de benefactor al mismo tiempo.
 
+## Crecimiento del catálogo (1.5.0)
+
+Hasta 1.4.0, `discovery.ts` traía **todo** el catálogo de `benefits` activo a Node y filtraba/agrupaba en JavaScript (`benefits.city`/`category` son texto libre separado por comas, sin índice útil para "¿esta fila incluye Cali?"). Funcionaba con el catálogo actual, pero cada turno de chat habría descargado el catálogo completo sin importar cuántos beneficios hubiera. 1.5.0 lo reemplaza por columnas generadas + índices GIN + una vista materializada + funciones RPC — `discovery.ts` ya no trae filas para filtrar, solo lee resultados ya resueltos por Postgres.
+
+- **`benefits.city_list` / `category_list`** (columnas generadas, `stored`) — arrays derivados automáticamente del mismo texto separado por comas que ya se carga a mano (cero cambios en cómo se carga catálogo), normalizados sin tildes/minúsculas (`unaccent`) para que "Tuluá"/"Tulua" cuenten como la misma ciudad. Índice GIN en cada una.
+- **`public.city_regions`** (`city, department, country, display_name`) — tabla de referencia chica (hoy 19 filas) que resuelve la jerarquía ciudad → departamento → país. Un beneficio con `city = "Valle del Cauca"` o `"Colombia"` aparece automáticamente en **todas** las ciudades reales de ese departamento/país (vía `JOIN`, no duplicando filas en `benefits`) — agregar una ciudad nueva es una fila acá, cero código que tocar. Un trigger (`before insert/update` en `benefits`) rechaza guardar un beneficio activo con una ciudad/zona que no exista en esta tabla (ni como ciudad, ni departamento, ni país), con un error explicando qué falta, para que nunca quede invisible en silencio.
+- **`public.benefactor_city_coverage`** (vista materializada, benefactor × ciudad × conteo) — se refresca automáticamente (trigger `after insert/update/delete` en `benefits` y en `city_regions`) ante cualquier cambio de catálogo. `REFRESH` normal, no `CONCURRENTLY` (esa variante no puede correr dentro de un trigger) — aceptable porque la carga de catálogo es manual y de bajo volumen.
+- **Funciones RPC** (`get_benefactor_coverage`, `get_city_coverage`, `get_category_coverage`, `resolve_city_key`, `resolve_city_scope`, `city_scope_keys`) — exponen agregados/lookups reales de Postgres vía PostgREST (mismo patrón que `search_benefits_by_title_similarity`). `resolve_city_key` intenta match exacto primero (indexado) y solo si no encuentra nada cae a `ILIKE` — pero contra la vista ya resumida (unas pocas filas), nunca contra el catálogo completo; cubre la ciudad detectada por geolocalización, que no pasa por el matching de Haiku contra la lista real y puede traer variaciones de redacción.
+- **Comparación de ciudad ya no es por sufijo** (`cityMatch.ts` original) sino exacta/indexada en los 3 puntos migrados — se revisó cada call site real antes del cambio: siempre se les pasaba un valor que ya salía de una lista real de ciudades, así que el comportamiento no cambió en la práctica.
+
+## Tiempos de respuesta (1.5.0)
+
+Diagnóstico con instrumentación real (`MIA_DEBUG_TIMING=true`, ver `timing.ts` — silencioso por defecto, cada paso loguea cuánto tardó vía `console.log`, que Netlify captura en los logs de la función) encontró que el arranque de una conversación para un usuario que regresa tardaba **7.3 segundos**, todo en fila sin una sola cosa en paralelo. Bajó a **0.9–1.9 segundos** (según si ya tiene nombre guardado) con estos cambios en `onboarding.ts`/`store.ts`:
+
+- **Saludo de regreso fijo y personalizado** (usa el nombre si ya se conoce, si no el saludo genérico) en vez de una llamada completa a Sonnet solo para una frase de saludo — era el costo individual más grande (~1.9s).
+- **Consultar benefactores corre en paralelo con reconocer al usuario** cuando el celular ya mandó la ciudad (redetección silenciosa de geolocalización, ver `MiaChat.tsx`) — no hace falta esperar la respuesta de Supabase para saber qué ciudad consultar.
+- **Guardar ciudad + guardar permiso de ubicación corren juntos** (`Promise.all`), no uno tras otro.
+- **`whatsapp_number`, `session_started` y "ya se preguntó este campo de perfil"** pasan a ser de verdad no bloqueantes (antes el código decía "mejor esfuerzo, no bloqueante" pero sí se esperaban) — pura analítica/tracking, nunca determinan la respuesta al usuario.
+- Se eliminó una consulta duplicada: `startBenefactorSelect` volvía a pedirle los benefactores a Supabase aunque quien lo llamaba (`start()`) ya los tenía.
+
+Pendiente si se quiere exprimir más: la mayor parte del tiempo restante es latencia de red pura (ida y vuelta hasta Supabase, región `sa-east-1`), no tamaño de tabla — ahí la palanca sería la región de la función de Netlify, o combinar varias llamadas en una sola función RPC (más invasivo, no se hizo en 1.5.0).
+
+## Instalar en el celular (1.5.0)
+
+`InstallPrompt.tsx` (montado en `layout.tsx`, no en `MiaChat`) ofrece instalar MIA apenas se abre la página, mismo patrón que www.cinecolombia.com:
+
+- **Android/Chrome** — escucha `beforeinstallprompt`, banner con botón que dispara el prompt nativo real de instalación.
+- **iOS/Safari** — no existe esa API (Apple no la expone) — banner con instrucciones ("Toca compartir → Agregar a inicio").
+- No se muestra si ya está instalada (`display-mode: standalone` / `navigator.standalone`) ni en desktop. Se puede cerrar y no vuelve a aparecer en ese dispositivo (`localStorage`).
+- Reutiliza el manifest y el ícono ya agregados en 1.4.0 (`src/app/manifest.ts`, `/logo/mia-icon.png`).
+
 ## Cómo correrlo
 
 ```bash
@@ -140,6 +180,7 @@ Escribe `salir` para terminar y ver el perfil capturado en esa sesión.
 | `MIA_MODEL_HAIKU` | Default `claude-haiku-4-5-20251001` (clasificación/matching) |
 | `BEDI_HASH_SALT` | Salt compartido para hashear el teléfono del usuario |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Acceso server-side a Supabase (nunca se expone al navegador, por eso no hay variables `NEXT_PUBLIC_*` de Supabase) |
+| `MIA_DEBUG_TIMING` | `"true"` para loguear cuánto tarda cada paso del arranque de conversación (diagnóstico de tiempos de respuesta, 1.5.0) - silencioso si está ausente/vacío |
 
 ## Esquema de Supabase
 
@@ -156,6 +197,8 @@ Las migraciones en `supabase/*.sql` son la fuente de verdad versionada — corre
 
 Si tocas alguna de estas tablas/columnas, considera versionar una migración de "documentación" que capture el estado real, para que el repo deje de estar desincronizado del esquema vivo.
 
+Los cambios de esquema de 1.5.0 (`city_list`/`category_list`, `city_regions`, `benefactor_city_coverage`, la constraint de `session_started`) sí están completamente versionados en `supabase/*.sql` — ver "Crecimiento del catálogo" arriba.
+
 ## Qué falta / limitaciones conocidas
 
 - **No hay persistencia de historial de conversación.** Los turnos de chat viven solo en el estado del navegador (`ClientState.history`, va y vuelve en cada request) — nunca se guardan en Supabase.
@@ -163,7 +206,7 @@ Si tocas alguna de estas tablas/columnas, considera versionar una migración de 
 - **`name`, `age_range`, `gender` existen en `users` pero ningún flujo los captura todavía.**
 - **`affinities.weight` siempre es `1.0` fijo** — no hay señal real de intensidad de preferencia, solo de que la categoría se tocó alguna vez.
 - **No hay canal real de WhatsApp** — no hay webhook ni credenciales de ningún proveedor. El campo de "número de WhatsApp" en el phone-gate es solo un identificador que el usuario escribe a mano; identifica al usuario entre visitas web, no envía ni recibe mensajes de WhatsApp de verdad.
-- **Calidad de datos:** el campo `benefits.city` (texto libre) trae inconsistencias reales — ciudades duplicadas por acentuación (ej. "Tuluá"/"Tulua", "Jamundí"/"Jamundi") y al menos un valor que es un departamento, no una ciudad ("Valle del Cauca"). Vale la pena revisar la carga de datos de benefactores/beneficios.
+- **Calidad de datos (resuelto en 1.5.0):** el campo `benefits.city` tenía ciudades duplicadas por acentuación ("Tuluá"/"Tulua", "Jamundí"/"Jamundi") y valores que son departamento/país en vez de ciudad ("Valle del Cauca", "Colombia") — la comparación ahora ignora tildes y la jerarquía `city_regions` resuelve departamento/país automáticamente (ver "Crecimiento del catálogo"). Sigue siendo texto libre sin validación en la carga, así que una ciudad nueva mal escrita puede volver a producir variantes duplicadas - el trigger de sincronización sí avisa si la zona no existe en `city_regions`, pero no corrige errores de tipeo en una ciudad que sí coincide por casualidad con otra existente.
 - **`users.level` es solo semilla de gamificación (1.3.0)** — la columna existe con default `1` y se confirmó que ningún flujo la sobreescribe, pero no hay ninguna mecánica de puntos/subida de nivel ni elemento de UI todavía.
 - **Un nombre de negocio que coincide con una ciudad real** (ej. un negocio literalmente llamado como una ciudad) puede resolverse como cambio de ciudad en vez de búsqueda de negocio — `detectCityChange` corre en paralelo con prioridad sobre `classifyOpenMessage` (decisión preexistente a 1.3.0). Edge case detectado durante las pruebas de esta versión, no resuelto todavía.
 - **La Capa 2 del buscador de negocio (Haiku sobre `conditions`) trae el catálogo activo completo en cada búsqueda sin match de título** — bien a la escala actual (~230 filas), pero no pagina ni acota por ciudad de antemano (a propósito, ver "Buscador de negocio" arriba); revisar si el catálogo crece mucho.
@@ -209,6 +252,16 @@ Mismo método que las pruebas de 1.3.0 (`OnboardingSession` invocada directament
 - **`birth_date` con fecha real** (`"15 de marzo de 1990"`, interpretada y confirmada) → `users.birth_date` quedó en `1990-03-15` y `users.age_range` se derivó solo (`"36 a 50"`), sin ningún código de la app tocando esa columna — el trigger ya aplicado hizo el trabajo.
 - **Campo de perfil pendiente + recordatorio de negocio también vencido** (`last_business_search_at` simulado a 40 días) → solo apareció la pregunta de perfil en el saludo; al completar el sub-flujo y navegar hasta ver el detalle de un beneficio en la misma sesión, el tip de recordatorio de negocio **no apareció** — confirma que un campo de perfil elegible ocupa el único "extra" del regreso.
 - **Usuario con los 3 campos ya contestados** (marcados `answered = true` directamente, sin pasar por el flujo conversacional) → el saludo de regreso no preguntó nada de perfil y mostró los chips de benefactor de una, como el flujo pre-1.4.0; con `last_business_search_at` vencido, el tip de recordatorio de negocio **sí apareció** normalmente — confirma que la supresión es exclusiva de cuando hay de verdad un campo pendiente.
+
+## Pruebas — v1.5.0
+
+Corridas contra Supabase de Dev real, vía las funciones RPC directamente (SQL Editor) y `OnboardingSession`/`discovery.ts` invocados directamente con `tsx` (mismo patrón que `scripts/mia-cli.ts`, sin pasar por HTTP). Usuarios/datos de prueba creados y borrados en cada corrida - verificado sin residuos. `npx tsc --noEmit` y `npx eslint` corren limpios.
+
+- **Dedup de `session_started`** — insertar dos veces dentro de una transacción (mismo `user_id`, <30s de diferencia) fue rechazado por la constraint de exclusión con el código de error esperado (`23P01`), sin necesidad de ninguna consulta adicional del lado de la aplicación.
+- **Cobertura por ciudad** — antes/después de aplicar la jerarquía geográfica: Cali pasó de 247 a 252 beneficios (+4 de los benefactores marcados "Valle del Cauca", +1 de "Tributi", marcado "Colombia" sin ninguna ciudad). Quimbaya y Cartagena (ciudades del catálogo que NO son de Valle del Cauca) solo subieron +1 cada una (Tributi vía país) - confirma que el `JOIN` de 3 niveles no mezcla departamentos.
+- **Garantía de sincronización** — insertar (dentro de una transacción revertida) un beneficio activo con `city = "Ciudad Inventada"` fue rechazado con el mensaje de error esperado, sin dejar residuos.
+- **`discovery.ts` migrado a RPC** — `getAvailableBenefactors`/`getAvailableCities`/`getAvailableCategories`/`getBenefitsForCategory` probados end-to-end contra datos reales (Cali: 3 benefactores reales con conteos correctos; categorías y beneficios de Comfenalco en Cali coinciden con los datos de Supabase).
+- **Tiempos de respuesta** — medido con `MIA_DEBUG_TIMING=true`: usuario que regresa con nombre ya guardado, 7363ms → 943ms; sin nombre guardado, 7363ms → 1880ms. Verificado también que el saludo personalizado usa el nombre real cuando existe.
 
 ## Deploy
 

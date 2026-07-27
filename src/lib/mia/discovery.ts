@@ -1,25 +1,12 @@
 import { supabase } from "./supabaseClient";
+import { colorForString } from "./colorPalette";
 
-// Paleta de marca (violeta/cian + acentos) para asignar color a benefactores
-// de forma deterministica - no podemos hardcodear un color por nombre porque
-// la lista de benefactores crece con el tiempo (hoy 1, manana pueden ser 100).
-const CHIP_COLOR_PALETTE = [
-  "#6C4CF1",
-  "#22D3EE",
-  "#9B6CF0",
-  "#4C7DFB",
-  "#3EB6C4",
-  "#F59E0B",
-  "#EC4899",
-  "#10B981",
-];
-
+// Color de benefactor/programa deterministico por id - no podemos
+// hardcodear un color por nombre porque la lista de benefactores crece con
+// el tiempo (hoy 1, manana pueden ser 100). Paleta compartida en
+// colorPalette.ts (tambien la usa BenefitThumbnail.tsx, por titulo).
 export function colorForId(id: string): string {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  }
-  return CHIP_COLOR_PALETTE[hash % CHIP_COLOR_PALETTE.length];
+  return colorForString(id);
 }
 
 export type BenefactorOption = {

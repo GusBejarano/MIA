@@ -1,5 +1,6 @@
 import type { CardCarouselMessage } from "@/lib/mia/uiMessages";
 import { Star } from "@/components/mia/RatingStars";
+import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
 
 export default function BenefitCarousel({
   message,
@@ -17,22 +18,12 @@ export default function BenefitCarousel({
           onClick={() => onSelect(card.id, card.title)}
           className="flex w-36 shrink-0 flex-col overflow-hidden rounded-2xl border border-zinc-100 bg-white text-left shadow-sm active:scale-[0.97]"
         >
-          <div
-            className="relative flex h-20 w-full items-center justify-center text-white"
-            style={{ background: card.color }}
-          >
-            {card.thumbUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={card.thumbUrl}
-                alt=""
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <span className="text-2xl font-black opacity-80">
-                {card.title.charAt(0)}
-              </span>
-            )}
+          <div className="relative h-20 w-full">
+            <BenefitThumbnail
+              imageUrl={card.thumbUrl}
+              title={card.title}
+              className="h-full w-full"
+            />
             {card.rating > 0 && (
               <div className="absolute right-1 top-1 flex items-center gap-0.5 rounded-full bg-black/60 px-1 py-0.5">
                 {Array.from({ length: card.rating }).map((_, i) => (

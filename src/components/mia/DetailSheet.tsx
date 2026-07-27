@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { DetailSheetMessage } from "@/lib/mia/uiMessages";
 import RatingStars from "@/components/mia/RatingStars";
+import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
 
 export default function DetailSheet({
   message,
@@ -80,22 +81,12 @@ export default function DetailSheet({
           ✕
         </button>
 
-        <div
-          className="mx-4 mt-4 flex h-36 items-center justify-center rounded-2xl text-white"
-          style={{ background: "linear-gradient(135deg,#6C4CF1,#22D3EE)" }}
-        >
-          {message.photoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={message.photoUrl}
-              alt=""
-              className="h-full w-full rounded-2xl object-cover"
-            />
-          ) : (
-            <span className="text-3xl font-black opacity-80">
-              {message.title.charAt(0)}
-            </span>
-          )}
+        <div className="mx-4 mt-4">
+          <BenefitThumbnail
+            imageUrl={message.photoUrl}
+            title={message.title}
+            className="h-36 w-full rounded-2xl"
+          />
         </div>
 
         <div className="px-5 pb-6 pt-4">
