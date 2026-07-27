@@ -255,6 +255,22 @@ export default function MiaChat() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // "Despierta" la funcion serverless (Netlify agrupa todas las rutas
+  // dinamicas de Next.js en una sola funcion) apenas se carga la pantalla
+  // de bienvenida - para cuando la persona termina de leer y escribir su
+  // numero, el cold start (~7s medido en produccion tras ~5min sin
+  // trafico) ya se resolvio en segundo plano. Pega a /api/health (nunca
+  // /api/mia directo: esa ruta crea/actualiza un usuario real en Supabase
+  // por cada llamada). Mejor que un ping programado cada N minutos las 24h
+  // - solo gasta algo cuando hay una visita real.
+  useEffect(() => {
+    fetch("/api/health").catch(() => {
+      // Silencioso a proposito - es solo un intento de precalentar la
+      // funcion, si falla el flujo normal (con su propio manejo de
+      // errores) sigue funcionando igual, solo mas lento.
+    });
+  }, []);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, loading]);
