@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Exo_2 } from "next/font/google";
+import InstallPrompt from "@/components/InstallPrompt";
 import "./globals.css";
 
 const exo2 = Exo_2({
@@ -38,7 +39,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" className={`${exo2.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <InstallPrompt />
+      </body>
     </html>
   );
 }

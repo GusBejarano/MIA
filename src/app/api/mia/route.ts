@@ -6,6 +6,7 @@ import {
 } from "@/lib/mia/onboarding";
 import type { ChatMessage } from "@/lib/mia/claudeClient";
 import type { UiMessage, NavLink } from "@/lib/mia/uiMessages";
+import { timed } from "@/lib/mia/timing";
 
 // Backend stateless (Netlify Functions no conservan memoria entre
 // invocaciones): el estado completo de la sesion viaja de ida y vuelta
@@ -63,7 +64,9 @@ export async function POST(req: NextRequest) {
     let navLinks: NavLink[] | undefined;
 
     if (!state) {
-      const turn = await session.start({ locationPermissionGranted, detectedCity, logVisit });
+      const turn = await timed("route:session.start(total)", () =>
+        session.start({ locationPermissionGranted, detectedCity, logVisit })
+      );
       reply = turn.reply;
       ui = turn.ui;
       navLinks = turn.navLinks;

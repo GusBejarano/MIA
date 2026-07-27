@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# estado interno de Claude Code (sesion/pid/timestamp local, no es parte del proyecto)
+.claude/scheduled_tasks.lock

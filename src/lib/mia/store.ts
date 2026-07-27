@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient";
 import { hashPhone } from "./phoneHash";
+import { timed } from "./timing";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -7,6 +8,7 @@ export type UserProfile = {
   id: string;
   city: string | null;
   locationPermissionGranted: boolean;
+  name: string | null;
 };
 
 /**
@@ -18,14 +20,16 @@ export type UserProfile = {
 export async function getOrCreateUser(phone: string): Promise<UserProfile> {
   const phoneHash = hashPhone(phone);
 
-  const { data, error } = await supabase
-    .from("users")
-    .upsert(
-      { phone_hash: phoneHash, last_active_at: new Date().toISOString() },
-      { onConflict: "phone_hash" }
-    )
-    .select("id, city, location_permission_granted")
-    .single();
+  const { data, error } = await timed("getOrCreateUser:upsert", () =>
+    supabase
+      .from("users")
+      .upsert(
+        { phone_hash: phoneHash, last_active_at: new Date().toISOString() },
+        { onConflict: "phone_hash" }
+      )
+      .select("id, city, location_permission_granted, name")
+      .single()
+  );
 
   if (error || !data) {
     throw new Error(
@@ -37,19 +41,23 @@ export async function getOrCreateUser(phone: string): Promise<UserProfile> {
 
   // Guardado adicional de mejor esfuerzo, solo para consulta administrativa
   // directa en Supabase (users.whatsapp_number) - nunca debe poder romper
-  // ni bloquear el reconocimiento/creacion del usuario si falla. No
-  // reemplaza ni toca nada del flujo de phone_hash (reconocimiento entre
-  // visitas, prellenado), corre aparte y en paralelo a el.
-  try {
-    await saveWhatsappNumber(userId, phone);
-  } catch (err) {
-    console.error("No se pudo guardar whatsapp_number (no bloqueante):", err);
-  }
+  // ni bloquear el reconocimiento/creacion del usuario si falla, ni
+  // demorar la respuesta al usuario (diagnostico v1.5: esto solo tardaba
+  // 300-700ms esperandolo sin necesidad). Disparado sin await de verdad -
+  // si la funcion serverless se congela antes de que termine, se pierde
+  // ese guardado puntual, aceptable para un dato que ya es "mejor
+  // esfuerzo" por diseno (nunca se lee de vuelta en la conversacion).
+  timed("getOrCreateUser:saveWhatsappNumber", () => saveWhatsappNumber(userId, phone)).catch(
+    (err) => {
+      console.error("No se pudo guardar whatsapp_number (no bloqueante):", err);
+    }
+  );
 
   return {
     id: userId,
     city: (data.city as string | null) ?? null,
     locationPermissionGranted: Boolean(data.location_permission_granted),
+    name: (data.name as string | null) ?? null,
   };
 }
 
@@ -97,19 +105,28 @@ export async function saveLocationPermission(userId: string) {
   }
 }
 
+// Codigo de Postgres para "exclusion_violation" - lo lanza la constraint
+// no_duplicate_session_started (ver supabase/2026.07.27-mia_session_started_dedup.sql)
+// cuando este mismo user_id ya registro un session_started hace menos de
+// 30s. Es el resultado ESPERADO de un reintento/duplicado bloqueado por la
+// base de datos, no una falla real - no se propaga como error.
+const POSTGRES_EXCLUSION_VIOLATION = "23P01";
+
 /**
  * Un evento por visita real (no por mensaje) - ver MiaChat.tsx para el
  * gate de sessionStorage que evita duplicarlo en refrescos de pagina
- * dentro de la misma visita. Uniforme para usuarios nuevos y que
- * regresan, para poder calcular retencion (dia 1/7/30) comparando la
- * primera ocurrencia de este evento por usuario contra las siguientes.
+ * dentro de la misma visita, y la constraint de exclusion en Supabase para
+ * el respaldo del lado del servidor (mismo INSERT, sin consulta extra).
+ * Uniforme para usuarios nuevos y que regresan, para poder calcular
+ * retencion (dia 1/7/30) comparando la primera ocurrencia de este evento
+ * por usuario contra las siguientes.
  */
 export async function saveSessionStarted(userId: string) {
   const { error } = await supabase.from("events").insert({
     user_id: userId,
     event_type: "session_started",
   });
-  if (error) {
+  if (error && error.code !== POSTGRES_EXCLUSION_VIOLATION) {
     throw new Error(
       `No se pudo registrar el evento session_started: ${error.message}`
     );

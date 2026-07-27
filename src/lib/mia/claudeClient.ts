@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { MIA_SYSTEM_PROMPT } from "./systemPrompt";
+import { timed } from "./timing";
 
 const apiKey = process.env.ANTHROPIC_API_KEY;
 if (!apiKey) {
@@ -26,22 +27,24 @@ export async function miaConversation(
   history: ChatMessage[],
   turnInstruction: string
 ): Promise<string> {
-  const response = await client.messages.create({
-    model: SONNET_MODEL,
-    max_tokens: 500,
-    system: [
-      {
-        type: "text",
-        text: MIA_SYSTEM_PROMPT,
-        cache_control: { type: "ephemeral" },
-      },
-      {
-        type: "text",
-        text: `Instruccion para tu proximo mensaje (no la repitas literal, redactala en tu propio tono): ${turnInstruction}`,
-      },
-    ],
-    messages: history,
-  });
+  const response = await timed("claude:miaConversation(sonnet)", () =>
+    client.messages.create({
+      model: SONNET_MODEL,
+      max_tokens: 500,
+      system: [
+        {
+          type: "text",
+          text: MIA_SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+        {
+          type: "text",
+          text: `Instruccion para tu proximo mensaje (no la repitas literal, redactala en tu propio tono): ${turnInstruction}`,
+        },
+      ],
+      messages: history,
+    })
+  );
 
   const textBlock = response.content.find((block) => block.type === "text");
   return textBlock && "text" in textBlock ? textBlock.text : "";
@@ -54,11 +57,13 @@ export async function miaConversation(
  * personalidad - es una tarea mecanica, no una conversacion con el usuario.
  */
 export async function miaTask(prompt: string): Promise<string> {
-  const response = await client.messages.create({
-    model: HAIKU_MODEL,
-    max_tokens: 300,
-    messages: [{ role: "user", content: prompt }],
-  });
+  const response = await timed("claude:miaTask(haiku)", () =>
+    client.messages.create({
+      model: HAIKU_MODEL,
+      max_tokens: 300,
+      messages: [{ role: "user", content: prompt }],
+    })
+  );
 
   const textBlock = response.content.find((block) => block.type === "text");
   return textBlock && "text" in textBlock ? textBlock.text : "";

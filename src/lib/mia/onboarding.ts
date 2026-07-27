@@ -41,6 +41,7 @@ import {
 } from "./discovery";
 import { cityMatches } from "./cityMatch";
 import { findBusinessMatches } from "./businessSearch";
+import { timed } from "./timing";
 import type {
   UiMessage,
   ChipSelectMessage,
@@ -256,18 +257,31 @@ export class OnboardingSession {
       logVisit?: boolean;
     } = {}
   ): Promise<Turn> {
-    const user = await getOrCreateUser(this.phone);
+    const userPromise = timed("start:getOrCreateUser", () => getOrCreateUser(this.phone));
+
+    // Si el cliente ya mando una ciudad (redeteccion silenciosa de
+    // geolocalizacion - ver MiaChat.tsx), esa es la que se va a usar de
+    // todos modos (tiene prioridad sobre la guardada en Supabase, ver
+    // `city` mas abajo) - no hace falta esperar a que responda
+    // getOrCreateUser para arrancar esta consulta, corren en paralelo
+    // (diagnostico v1.5: antes se esperaban en fila sin necesidad).
+    const speculativeBenefactoresPromise =
+      opts.locationPermissionGranted && opts.detectedCity
+        ? timed("start:getAvailableBenefactors", () =>
+            getAvailableBenefactors(opts.detectedCity!)
+          )
+        : null;
+
+    const user = await userPromise;
     this.userId = user.id;
 
     // Analitica de retencion (1 evento por visita real, ver MiaChat.tsx) -
-    // nunca debe poder romper el arranque de la conversacion si falla, asi
-    // que el error se registra pero no se propaga.
+    // pura analitica, nunca debe poder romper NI DEMORAR el arranque de la
+    // conversacion - disparada sin esperar su resultado.
     if (opts.logVisit ?? true) {
-      try {
-        await saveSessionStarted(this.userId);
-      } catch (err) {
+      timed("start:saveSessionStarted", () => saveSessionStarted(this.userId!)).catch((err) => {
         console.error("No se pudo registrar session_started:", err);
-      }
+      });
     }
 
     // La API de Claude exige al menos un mensaje en `messages` - el arranque
@@ -281,20 +295,29 @@ export class OnboardingSession {
     if (granted && city) {
       this.profile.city = city;
       this.profile.locationPermissionGranted = true;
-      if (opts.detectedCity && opts.detectedCity !== user.city) {
-        await saveCity(this.userId, city, "geolocation");
-      }
-      if (!user.locationPermissionGranted) {
-        await saveLocationPermission(this.userId);
-      }
 
-      const benefactores = await getAvailableBenefactors(city);
+      // Independientes entre si (ninguna depende del resultado de la
+      // otra) - corren juntas en vez de una tras otra.
+      await Promise.all([
+        opts.detectedCity && opts.detectedCity !== user.city
+          ? timed("start:saveCity", () => saveCity(this.userId!, city, "geolocation"))
+          : Promise.resolve(),
+        !user.locationPermissionGranted
+          ? timed("start:saveLocationPermission", () => saveLocationPermission(this.userId!))
+          : Promise.resolve(),
+      ]);
+
+      const benefactores = speculativeBenefactoresPromise
+        ? await speculativeBenefactoresPromise
+        : await timed("start:getAvailableBenefactors", () => getAvailableBenefactors(city));
       if (benefactores.length === 0) {
         await saveCityInterest(this.userId, city);
         return this.showCityChoice();
       }
 
-      return this.startBenefactorSelect(city, false, true);
+      return timed("start:startBenefactorSelect", () =>
+        this.startBenefactorSelect(city, false, true, user.name, benefactores)
+      );
     }
 
     const reply = LOCATION_PERMISSION_MESSAGE;
@@ -348,22 +371,27 @@ export class OnboardingSession {
   }): Promise<Turn> {
     if (opts.locationPermissionGranted) {
       const city = opts.detectedCity ?? "Cali";
-      await saveCity(this.userId!, city, "geolocation");
-      await saveLocationPermission(this.userId!);
       this.profile.city = city;
       this.profile.locationPermissionGranted = true;
 
-      // Validacion interna y silenciosa contra la cobertura real - sin
-      // mensaje intermedio. Si no hay descuentos activos ahi, salta directo
-      // al Paso 3.1 (elegir ciudad); si si hay, directo al Paso 4
-      // (benefactores), la ciudad detectada queda preseleccionada.
-      const benefactores = await getAvailableBenefactors(city);
+      // Independientes entre si - corren juntas en vez de una tras otra.
+      const [, , benefactores] = await Promise.all([
+        saveCity(this.userId!, city, "geolocation"),
+        saveLocationPermission(this.userId!),
+        // Validacion interna y silenciosa contra la cobertura real - sin
+        // mensaje intermedio. Si no hay descuentos activos ahi, salta
+        // directo al Paso 3.1 (elegir ciudad); si si hay, directo al Paso 4
+        // (benefactores), la ciudad detectada queda preseleccionada.
+        getAvailableBenefactors(city),
+      ]);
       if (benefactores.length === 0) {
         await saveCityInterest(this.userId!, city);
         return this.showCityChoice();
       }
 
-      return this.startBenefactorSelect(city, true);
+      // benefactores ya resuelto arriba - se lo pasamos para que no lo
+      // vuelva a consultar el mismo dato.
+      return this.startBenefactorSelect(city, true, false, undefined, benefactores);
     }
 
     return this.showCityChoice();
@@ -461,13 +489,21 @@ export class OnboardingSession {
     };
   }
 
-  /** Arranca la etapa de seleccion de benefactores con datos reales de Supabase. */
+  /**
+   * Arranca la etapa de seleccion de benefactores con datos reales de
+   * Supabase. `knownBenefactores`: si quien llama ya los consulto (ej.
+   * start()/resolveLocationPermission(), que necesitan saber el conteo de
+   * antemano para decidir si mostrar la pantalla de ciudades en su lugar),
+   * se reusa en vez de volver a pedirselos a Supabase.
+   */
   private async startBenefactorSelect(
     city: string,
     affirmCity: boolean,
-    returning = false
+    returning = false,
+    userName?: string | null,
+    knownBenefactores?: BenefactorOption[]
   ): Promise<Turn> {
-    const benefactores = await getAvailableBenefactors(city);
+    const benefactores = knownBenefactores ?? (await getAvailableBenefactors(city));
 
     if (benefactores.length === 0) {
       this.stage = "done";
@@ -480,21 +516,36 @@ export class OnboardingSession {
     this.stage = "benefactor_select";
 
     if (returning) {
+      // Saludo fijo (no LLM) - diagnostico v1.5: la version anterior le
+      // pedia a Sonnet una sola frase de saludo y eso solo costaba ~2s,
+      // el grueso del tiempo de espera justo despues del telefono para un
+      // usuario que regresa. Personalizado con el nombre si ya lo
+      // conocemos (aprendizaje progresivo, ver profile.name mas abajo);
+      // si no, el saludo generico de siempre.
+      const greeting = userName
+        ? `¡Hola de nuevo, ${userName}! Qué bueno verte otra vez por aquí.`
+        : `¡Hola de nuevo! Qué bueno verte otra vez por aquí.`;
+
       // Aprendizaje progresivo del perfil (v1.4) - a lo sumo un campo
       // pendiente por regreso, y ocupa el unico "extra" de esta sesion
       // (suprime el tip del buscador de negocio, ver maybeBusinessSearchTip).
-      const pendingField = await selectPendingProfileField(this.userId!);
+      const pendingField = await timed("startBenefactorSelect:selectPendingProfileField", () =>
+        selectPendingProfileField(this.userId!)
+      );
       if (pendingField && isKnownProfileFieldKey(pendingField.fieldKey)) {
         this.profile.profileLearningActiveThisSession = true;
         this.profile.pendingProfileField = pendingField.fieldKey;
         // Se registra AL PREGUNTAR (no solo al confirmar/declinar) - ver el
-        // comentario de recordProfileFieldAsked en store.ts.
-        await recordProfileFieldAsked(this.userId!, pendingField.fieldKey);
+        // comentario de recordProfileFieldAsked en store.ts. Disparado sin
+        // esperar: es un registro de seguimiento, no algo que determine
+        // que le respondemos a este usuario en este turno - en el peor
+        // caso (la funcion se corta antes de que termine), ese campo
+        // puede volver a preguntarse un poco antes de lo que le tocaba en
+        // la rotacion, nunca rompe ni bloquea la respuesta.
+        recordProfileFieldAsked(this.userId!, pendingField.fieldKey).catch((err) => {
+          console.error(`No se pudo registrar que se pregunto ${pendingField.fieldKey}:`, err);
+        });
 
-        const greeting = await miaConversation(
-          this.history,
-          `El usuario regresa (ya habia concedido el permiso de ubicacion antes) y esta en ${city}, que si tiene cobertura. Saludalo con calidez reconociendo la continuidad, en una sola frase breve - no repitas el onboarding, no vuelvas a pedir el permiso de ubicacion, y no hagas ninguna otra pregunta ni menciones benefactores todavia (eso viene despues, en otro mensaje aparte).`
-        );
         // prompt_text va tal cual esta en profile_learning_fields, sin
         // pasar por el LLM (es copy de producto ya decidido).
         const reply = `${greeting}\n\n${pendingField.promptText}`;
@@ -502,9 +553,8 @@ export class OnboardingSession {
         return { reply, ui: profileFieldAskUi(pendingField.fieldKey) };
       }
 
-      const reply = await this.emit(
-        `El usuario regresa (ya habia concedido el permiso de ubicacion antes) y esta en ${city}, que si tiene cobertura. Saludalo con calidez reconociendo la continuidad, sin repetir el onboarding ni volver a pedir el permiso de ubicacion. Luego pide que elija con cual de sus benefactores tiene una relacion activa (una sola opcion) - lo va a ver como opciones para tocar, no hace falta que las listes en texto.`
-      );
+      const reply = `${greeting} ¿Con cuál de tus benefactores tienes una relación activa?`;
+      this.history.push({ role: "assistant", content: reply });
       return { reply, ui: [this.benefactorChipMessage(benefactores)] };
     }
 

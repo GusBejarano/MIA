@@ -1,5 +1,4 @@
 import { supabase } from "./supabaseClient";
-import { cityMatches } from "./cityMatch";
 
 // Paleta de marca (violeta/cian + acentos) para asignar color a benefactores
 // de forma deterministica - no podemos hardcodear un color por nombre porque
@@ -30,28 +29,31 @@ export type BenefactorOption = {
   color: string;
 };
 
-/** Todos los benefactores con al menos un beneficio activo en la ciudad del usuario. */
+type BenefactorCoverageRow = { source_program_id: string; benefit_count: number };
+
+/**
+ * Todos los benefactores con al menos un beneficio activo en la ciudad del
+ * usuario - via la funcion RPC get_benefactor_coverage (agregado ya resuelto
+ * en Postgres contra la vista materializada de cobertura, incluye
+ * beneficios de departamento/pais que aplican a esa ciudad). Nunca trae el
+ * catalogo completo a Node, sin importar cuantos beneficios haya.
+ */
 export async function getAvailableBenefactors(city: string): Promise<BenefactorOption[]> {
-  const { data, error } = await supabase
-    .from("benefits")
-    .select("source_program_id, city")
-    .eq("status", "activo");
+  const { data, error } = await supabase.rpc("get_benefactor_coverage", {
+    target_city: city,
+  });
   if (error) {
     throw new Error(`No se pudieron consultar los beneficios: ${error.message}`);
   }
 
-  const counts = new Map<string, number>();
-  for (const row of data ?? []) {
-    if (!cityMatches(row.city as string, city)) continue;
-    const id = row.source_program_id as string;
-    counts.set(id, (counts.get(id) ?? 0) + 1);
-  }
-  if (counts.size === 0) return [];
+  const rows = (data ?? []) as BenefactorCoverageRow[];
+  if (rows.length === 0) return [];
+  const countById = new Map(rows.map((r) => [r.source_program_id, Number(r.benefit_count)]));
 
   const { data: programRows, error: programsError } = await supabase
     .from("programs")
     .select("id, name")
-    .in("id", [...counts.keys()]);
+    .in("id", [...countById.keys()]);
   if (programsError) {
     throw new Error(`No se pudieron resolver los programas: ${programsError.message}`);
   }
@@ -60,7 +62,7 @@ export async function getAvailableBenefactors(city: string): Promise<BenefactorO
     .map((p) => ({
       id: p.id as string,
       name: p.name as string,
-      count: counts.get(p.id as string) ?? 0,
+      count: countById.get(p.id as string) ?? 0,
       color: colorForId(p.id as string),
     }))
     .sort((a, b) => b.count - a.count);
@@ -74,39 +76,26 @@ export type CityOption = {
   count: number;
 };
 
+type CityCoverageRow = { city_value: string; city_label: string; benefit_count: number };
+
 /**
  * Todas las ciudades con al menos un beneficio activo, con su conteo real,
- * de mayor a menor cobertura. El campo `city` es texto libre y puede traer
- * varias ciudades separadas por coma (ver cityMatch.ts) - se descarta
- * "Colombia" porque es el pais, no una ciudad (aparece como ultimo pedazo
- * en ese formato), nunca una cobertura real en si misma.
+ * de mayor a menor cobertura - via get_city_coverage (ver
+ * supabase/2026.07.27-mia_geographic_hierarchy.sql para el detalle de como
+ * se resuelve ciudad/departamento/pais). city_label ya viene con tilde
+ * correcta desde city_regions.display_name, no adivinada.
  */
 export async function getAvailableCities(): Promise<CityOption[]> {
-  const { data, error } = await supabase
-    .from("benefits")
-    .select("city")
-    .eq("status", "activo");
+  const { data, error } = await supabase.rpc("get_city_coverage");
   if (error) {
     throw new Error(`No se pudieron consultar las ciudades: ${error.message}`);
   }
 
-  const counts = new Map<string, { label: string; count: number }>();
-  for (const row of data ?? []) {
-    const pieces = (row.city as string)
-      .split(",")
-      .map((p) => p.trim())
-      .filter((p) => p && p.toLowerCase() !== "colombia");
-    for (const piece of pieces) {
-      const key = piece.toLowerCase();
-      const existing = counts.get(key);
-      if (existing) existing.count += 1;
-      else counts.set(key, { label: piece, count: 1 });
-    }
-  }
-
-  return [...counts.entries()]
-    .map(([value, { label, count }]) => ({ value, label, count }))
-    .sort((a, b) => b.count - a.count);
+  return ((data ?? []) as CityCoverageRow[]).map((row) => ({
+    value: row.city_value,
+    label: row.city_label,
+    count: Number(row.benefit_count),
+  }));
 }
 
 export type CategoryOption = {
@@ -117,40 +106,28 @@ export type CategoryOption = {
   count: number;
 };
 
-/** Categorias reales (atomicas, separando las compuestas por coma) de los benefactores elegidos. */
+type CategoryCoverageRow = { category_value: string; category_label: string; benefit_count: number };
+
+/** Categorias reales (atomicas, separando las compuestas por coma) de los benefactores elegidos - via get_category_coverage. */
 export async function getAvailableCategories(
   programIds: string[],
   city: string
 ): Promise<CategoryOption[]> {
   if (programIds.length === 0) return [];
 
-  const { data, error } = await supabase
-    .from("benefits")
-    .select("category, city")
-    .eq("status", "activo")
-    .in("source_program_id", programIds);
+  const { data, error } = await supabase.rpc("get_category_coverage", {
+    program_ids: programIds,
+    target_city: city,
+  });
   if (error) {
     throw new Error(`No se pudieron consultar las categorias: ${error.message}`);
   }
 
-  const counts = new Map<string, { label: string; count: number }>();
-  for (const row of data ?? []) {
-    if (!cityMatches(row.city as string, city)) continue;
-    const pieces = (row.category as string)
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean);
-    for (const piece of pieces) {
-      const key = piece.toLowerCase();
-      const existing = counts.get(key);
-      if (existing) existing.count += 1;
-      else counts.set(key, { label: piece, count: 1 });
-    }
-  }
-
-  return [...counts.entries()]
-    .map(([value, { label, count }]) => ({ value, label, count }))
-    .sort((a, b) => b.count - a.count);
+  return ((data ?? []) as CategoryCoverageRow[]).map((row) => ({
+    value: row.category_value,
+    label: row.category_label,
+    count: Number(row.benefit_count),
+  }));
 }
 
 export type BenefitCard = {
@@ -161,7 +138,13 @@ export type BenefitCard = {
   thumbUrl: string | null;
 };
 
-/** Todos los beneficios de una categoria (sin tope - el usuario ya eligio explicitamente). */
+/**
+ * Todos los beneficios de una categoria (sin tope - el usuario ya eligio
+ * explicitamente). resolve_city_scope trae las claves de alcance (ciudad +
+ * departamento + pais) en una sola llamada; el filtro real (ciudad y
+ * categoria) lo hace Postgres via los indices GIN de city_list/
+ * category_list (.overlaps/.contains), nunca JS post-fetch.
+ */
 export async function getBenefitsForCategory(
   programIds: string[],
   categoryValue: string,
@@ -170,11 +153,20 @@ export async function getBenefitsForCategory(
 ): Promise<BenefitCard[]> {
   if (programIds.length === 0) return [];
 
+  const { data: scopeKeys, error: scopeError } = await supabase.rpc("resolve_city_scope", {
+    target_city: city,
+  });
+  if (scopeError) {
+    throw new Error(`No se pudo resolver el alcance de la ciudad: ${scopeError.message}`);
+  }
+
   const { data, error } = await supabase
     .from("benefits")
-    .select("id, title, category, city, source_program_id, image_url")
+    .select("id, title, source_program_id, image_url")
     .eq("status", "activo")
-    .in("source_program_id", programIds);
+    .in("source_program_id", programIds)
+    .overlaps("city_list", (scopeKeys ?? []) as string[])
+    .contains("category_list", [categoryValue]);
   if (error) {
     throw new Error(`No se pudieron consultar los beneficios: ${error.message}`);
   }
@@ -190,21 +182,13 @@ export async function getBenefitsForCategory(
     (programRows ?? []).map((p) => [p.id as string, p.name as string])
   );
 
-  return (data ?? [])
-    .filter((row) => cityMatches(row.city as string, city))
-    .filter((row) =>
-      (row.category as string)
-        .split(",")
-        .map((p) => p.trim().toLowerCase())
-        .includes(categoryValue)
-    )
-    .map((row) => ({
-      id: row.id as string,
-      title: row.title as string,
-      tag: categoryLabel,
-      sourceProgram: nameById.get(row.source_program_id as string) ?? "",
-      thumbUrl: (row.image_url as string) ?? null,
-    }));
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    title: row.title as string,
+    tag: categoryLabel,
+    sourceProgram: nameById.get(row.source_program_id as string) ?? "",
+    thumbUrl: (row.image_url as string) ?? null,
+  }));
 }
 
 export type BenefitDetail = {
