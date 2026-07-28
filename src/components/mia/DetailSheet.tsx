@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { DetailSheetMessage } from "@/lib/mia/uiMessages";
 import RatingStars from "@/components/mia/RatingStars";
 import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
+import InfoTooltip from "@/components/mia/InfoTooltip";
 
 export default function DetailSheet({
   message,
@@ -101,6 +102,15 @@ export default function DetailSheet({
             <p className="mt-2 text-sm leading-relaxed text-zinc-500">
               {message.description}
             </p>
+          )}
+
+          {message.redemptionInstructions && (
+            <div className="mt-2">
+              <InfoTooltip
+                term="¿Cómo disfrutar este privilegio?"
+                definition={message.redemptionInstructions}
+              />
+            </div>
           )}
 
           {!hasRelation && (

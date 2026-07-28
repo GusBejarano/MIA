@@ -187,6 +187,8 @@ export type BenefitDetail = {
   details: { label: string; value: string }[];
   links: { go: string | null; web: string | null; social: string | null };
   sourceProgramId: string;
+  /** Como reclamar/usar el beneficio (ej. "presenta tu carne", "codigo X en la web") - null en beneficios/benefactores que todavia no tienen este dato capturado. */
+  redemptionInstructions: string | null;
 };
 
 const MONTHS_ES = [
@@ -203,7 +205,7 @@ export async function getBenefitDetail(benefitId: string): Promise<BenefitDetail
   const { data, error } = await supabase
     .from("benefits")
     .select(
-      "id, title, category, conditions, valid_until, image_url, company_url, social_media_url, how_to_get_there, address, source_program_id"
+      "id, title, category, conditions, valid_until, image_url, company_url, social_media_url, how_to_get_there, address, source_program_id, redemption_instructions"
     )
     .eq("id", benefitId)
     .maybeSingle();
@@ -233,6 +235,7 @@ export async function getBenefitDetail(benefitId: string): Promise<BenefitDetail
       social: (data.social_media_url as string) ?? null,
     },
     sourceProgramId: data.source_program_id as string,
+    redemptionInstructions: (data.redemption_instructions as string | null) ?? null,
   };
 }
 

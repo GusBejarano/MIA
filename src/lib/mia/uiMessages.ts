@@ -73,6 +73,8 @@ export type DetailSheetMessage = {
   rating: number;
   /** Benefactor de este beneficio y si el usuario ya declaro relacion con el - en el flujo guiado por chips siempre es true (elegir el chip ya la declara), pero un beneficio llegado por el buscador de negocio puede no tenerla todavia. */
   relation: { programId: string; programName: string; hasRelation: boolean };
+  /** Como reclamar/usar el beneficio - null si todavia no esta capturado (el frontend oculta el trigger del popup en ese caso, no muestra uno vacio). */
+  redemptionInstructions: string | null;
 };
 
 /** Tip de bajo perfil sobre el buscador de negocio - "hint" la primera vez que nunca lo uso, "reminder" cuando lo uso pero hace mas tiempo que el umbral configurado (ver app_settings.business_search_reminder_days). */
