@@ -33,6 +33,7 @@ import {
   getAvailableCities,
   getBenefitsForCategory,
   getBenefitDetail,
+  getBenefitLocations,
   getProgramNamesByIds,
   formatDateEs,
   colorForId,
@@ -848,9 +849,10 @@ export class OnboardingSession {
     const rating = await getRating(this.userId!, benefitId);
 
     const { sourceProgramId, ...detailRest } = detail;
-    const [programNames, userProgramIds] = await Promise.all([
+    const [programNames, userProgramIds, sedes] = await Promise.all([
       getProgramNamesByIds([sourceProgramId]),
       getUserProgramIds(this.userId!),
+      getBenefitLocations(benefitId, this.profile.city ?? ""),
     ]);
     const relation = {
       programId: sourceProgramId,
@@ -867,7 +869,15 @@ export class OnboardingSession {
     // un hueco ("Cali ›  › Categoria").
     const breadcrumb = `${this.profile.city} › ${relation.programName} › ${detail.tag}`;
 
-    const ui: DetailSheetMessage = { type: "detail_sheet", ...detailRest, tag: breadcrumb, rating, relation };
+    const ui: DetailSheetMessage = {
+      type: "detail_sheet",
+      ...detailRest,
+      tag: breadcrumb,
+      rating,
+      relation,
+      sedes,
+      locationPermissionGranted: this.profile.locationPermissionGranted ?? false,
+    };
     const uiBlocks: UiMessage[] = [ui];
 
     const tip = await this.maybeBusinessSearchTip(priorExposures.length === 0, lastBusinessSearchAt);

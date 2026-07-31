@@ -6,6 +6,7 @@ import type { ChatMessage } from "@/lib/mia/claudeClient";
 import type { Profile, Stage } from "@/lib/mia/onboarding";
 import type { UiMessage, DetailSheetMessage, NavLink } from "@/lib/mia/uiMessages";
 import { RELACION_ACTIVA_TERM, RELACION_ACTIVA_DEFINITION } from "@/lib/mia/copy";
+import { getPosition, isGeolocationGranted } from "@/lib/mia/geolocationClient";
 import ChipSelect from "@/components/mia/ChipSelect";
 import SummaryCards from "@/components/mia/SummaryCards";
 import BenefitCarousel from "@/components/mia/BenefitCarousel";
@@ -91,24 +92,6 @@ function claimVisit(): boolean {
     // sessionStorage no disponible (ej. modo privado estricto) - mejor
     // registrar la visita de mas que perderla del todo.
     return true;
-  }
-}
-
-/**
- * Confirma en el navegador (no en nuestro registro) si el permiso de
- * geolocalizacion sigue concedido antes de invocarla en silencio - evita
- * disparar el dialogo nativo del navegador sin contexto cuando el permiso
- * fue revocado fuera de la app o nunca existio en este dispositivo.
- */
-async function isGeolocationGranted(): Promise<boolean> {
-  if (!("permissions" in navigator)) return false;
-  try {
-    const status = await navigator.permissions.query({
-      name: "geolocation" as PermissionName,
-    });
-    return status.state === "granted";
-  } catch {
-    return false;
   }
 }
 
@@ -208,20 +191,6 @@ async function callMia(payload: Record<string, unknown>) {
     navLinks?: NavLink[];
     state: ClientState;
   };
-}
-
-function getPosition(): Promise<GeolocationPosition> {
-  return new Promise((resolve, reject) => {
-    if (!("geolocation" in navigator)) {
-      reject(new Error("Geolocalizacion no soportada"));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: false,
-      timeout: 15000,
-      maximumAge: 60000,
-    });
-  });
 }
 
 async function reverseGeocodeCity(
@@ -661,6 +630,11 @@ export default function MiaChat() {
           message={detailMessage}
           userId={sessionState?.userId}
           onClose={() => setDetailMessage(null)}
+          onLocationGranted={() =>
+            setSessionState((s) =>
+              s ? { ...s, profile: { ...s.profile, locationPermissionGranted: true } } : s
+            )
+          }
         />
       )}
     </div>

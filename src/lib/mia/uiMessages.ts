@@ -75,6 +75,10 @@ export type DetailSheetMessage = {
   relation: { programId: string; programName: string; hasRelation: boolean };
   /** Como reclamar/usar el beneficio - null si todavia no esta capturado (el frontend oculta el trigger del popup en ese caso, no muestra uno vacio). */
   redemptionInstructions: string | null;
+  /** Sedes reales de este beneficio en la ciudad del usuario (Fase 3, benefit_locations) - ausente/vacio o de 1 elemento no cambia el boton "Como llegar" de hoy; 2+ activa la seccion de multiples sedes. Opcional para no romper otros lugares que ya construyen este tipo (ej. preview del panel admin). */
+  sedes?: { id: string; mapsUrl: string; lat: number | null; lng: number | null }[];
+  /** Si el usuario ya autorizo compartir ubicacion antes (users.location_permission_granted) - decide si la seccion de sedes pide permiso de nuevo o ya muestra distancias. Opcional, ver nota de "sedes". */
+  locationPermissionGranted?: boolean;
 };
 
 /** Tip de bajo perfil sobre el buscador de negocio - "hint" la primera vez que nunca lo uso, "reminder" cuando lo uso pero hace mas tiempo que el umbral configurado (ver app_settings.business_search_reminder_days). */
