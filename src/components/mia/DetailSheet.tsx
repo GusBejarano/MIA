@@ -307,7 +307,7 @@ export default function DetailSheet({
                           className="font-bold text-mia-cyan"
                           aria-label="Abrir en Google Maps"
                         >
-                          ↗
+                          Ir ↗
                         </a>
                       </li>
                     ))}
@@ -331,7 +331,7 @@ export default function DetailSheet({
                               className="font-bold text-mia-cyan"
                               aria-label="Abrir en Google Maps"
                             >
-                              ↗
+                              Ir ↗
                             </a>
                           </li>
                         ))}
@@ -354,7 +354,7 @@ export default function DetailSheet({
                         className="font-bold text-mia-cyan"
                         aria-label="Abrir en Google Maps"
                       >
-                        ↗
+                        Ir ↗
                       </a>
                     </li>
                   ))}
