@@ -265,8 +265,9 @@ export default function DetailSheet({
               {showLocationAsk && !locationGranted && (
                 <div className="mb-3 rounded-xl bg-zinc-900 p-3 text-xs text-white">
                   <p className="mb-2 leading-relaxed">
-                    Tu ubicación no se comparte con nadie — solo se usa para calcular qué tan
-                    cerca están las sedes de los descuentos que consultes.
+                    Para mostrarte qué tan cerca de ti están los descuentos, necesito que me
+                    compartas tu ubicación. Solo la uso para calcular esa distancia, no la
+                    comparto con nadie más.
                   </p>
                   <div className="flex gap-2">
                     <button
