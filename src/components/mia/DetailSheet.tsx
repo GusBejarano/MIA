@@ -290,6 +290,7 @@ export default function DetailSheet({
 
               {userPosition ? (
                 <>
+                  {sortedSedesWithCoords.length > 0 && (
                   <ul className="flex flex-col gap-1.5">
                     {sortedSedesWithCoords.map((s, i) => (
                       <li
@@ -313,11 +314,14 @@ export default function DetailSheet({
                       </li>
                     ))}
                   </ul>
+                  )}
                   {sedesWithoutCoords.length > 0 && (
                     <>
-                      <div className="mb-1 mt-3 text-[11px] font-bold uppercase text-zinc-400">
-                        Otras sedes
-                      </div>
+                      {sortedSedesWithCoords.length > 0 && (
+                        <div className="mb-1 mt-3 text-[11px] font-bold uppercase text-zinc-400">
+                          Otras sedes
+                        </div>
+                      )}
                       <ul className="flex flex-col gap-1.5">
                         {sedesWithoutCoords.map((s, i) => (
                           <li
