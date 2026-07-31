@@ -335,6 +335,8 @@ export default function MiaChat() {
             pos.coords.longitude
           );
           payload.locationPermissionGranted = true;
+          payload.lat = pos.coords.latitude;
+          payload.lng = pos.coords.longitude;
           if (detectedCity) payload.detectedCity = detectedCity;
         } catch (err) {
           console.error("Redeteccion silenciosa de ubicacion fallo:", err);
@@ -378,6 +380,8 @@ export default function MiaChat() {
   async function handleLocationChoice(wantsToShare: boolean) {
     let granted = wantsToShare;
     let detectedCity: string | undefined;
+    let lat: number | undefined;
+    let lng: number | undefined;
 
     if (wantsToShare) {
       try {
@@ -386,6 +390,8 @@ export default function MiaChat() {
           pos.coords.latitude,
           pos.coords.longitude
         );
+        lat = pos.coords.latitude;
+        lng = pos.coords.longitude;
       } catch (err) {
         // GeolocationPositionError: 1 = permiso denegado, 2 = posicion no
         // disponible, 3 = timeout. Tambien falla aqui (sin popup real) si
@@ -403,6 +409,8 @@ export default function MiaChat() {
     await sendTurn(granted ? "Si, dale." : "Prefiero no compartirla.", {
       locationPermissionGranted: granted,
       detectedCity,
+      lat,
+      lng,
     });
   }
 

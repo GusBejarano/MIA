@@ -24,6 +24,8 @@ type RequestBody = {
   state?: ClientState;
   locationPermissionGranted?: boolean;
   detectedCity?: string;
+  lat?: number;
+  lng?: number;
   chipSelection?: string[];
   viewDetailId?: string;
   /** false = esta visita ya registro session_started (mismo tab, solo un refresco) - ver MiaChat.tsx. Ausente/true = registrarlo. */
@@ -44,6 +46,8 @@ export async function POST(req: NextRequest) {
     state,
     locationPermissionGranted,
     detectedCity,
+    lat,
+    lng,
     chipSelection,
     viewDetailId,
     logVisit,
@@ -65,7 +69,7 @@ export async function POST(req: NextRequest) {
 
     if (!state) {
       const turn = await timed("route:session.start(total)", () =>
-        session.start({ locationPermissionGranted, detectedCity, logVisit })
+        session.start({ locationPermissionGranted, detectedCity, lat, lng, logVisit })
       );
       reply = turn.reply;
       ui = turn.ui;
@@ -79,6 +83,8 @@ export async function POST(req: NextRequest) {
       const turn = await session.handleUserMessage(message ?? "", {
         locationPermissionGranted,
         detectedCity,
+        lat,
+        lng,
         chipSelection,
         viewDetailId,
       });

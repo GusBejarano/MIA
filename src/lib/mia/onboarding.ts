@@ -8,6 +8,7 @@ import {
   saveCity,
   saveCityInterest,
   saveLocationPermission,
+  saveUserLocation,
   saveAffinity,
   saveProgramSelections,
   saveExposure,
@@ -254,6 +255,8 @@ export class OnboardingSession {
     opts: {
       locationPermissionGranted?: boolean;
       detectedCity?: string;
+      lat?: number;
+      lng?: number;
       logVisit?: boolean;
     } = {}
   ): Promise<Turn> {
@@ -307,6 +310,17 @@ export class OnboardingSession {
           : Promise.resolve(),
       ]);
 
+      // Guardado de mejor esfuerzo, sin bloquear el arranque de la
+      // conversacion (ver saveUserLocation en store.ts) - solo cuando el
+      // navegador si mando coordenadas reales.
+      if (opts.lat != null && opts.lng != null) {
+        timed("start:saveUserLocation", () => saveUserLocation(this.userId!, opts.lat!, opts.lng!)).catch(
+          (err) => {
+            console.error("No se pudo guardar la ubicacion del usuario (no bloqueante):", err);
+          }
+        );
+      }
+
       const benefactores = speculativeBenefactoresPromise
         ? await speculativeBenefactoresPromise
         : await timed("start:getAvailableBenefactors", () => getAvailableBenefactors(city));
@@ -341,6 +355,8 @@ export class OnboardingSession {
     opts: {
       locationPermissionGranted?: boolean;
       detectedCity?: string;
+      lat?: number;
+      lng?: number;
       chipSelection?: string[];
       viewDetailId?: string;
     } = {}
@@ -368,6 +384,8 @@ export class OnboardingSession {
   private async resolveLocationPermission(opts: {
     locationPermissionGranted?: boolean;
     detectedCity?: string;
+    lat?: number;
+    lng?: number;
   }): Promise<Turn> {
     if (opts.locationPermissionGranted) {
       const city = opts.detectedCity ?? "Cali";
@@ -384,6 +402,14 @@ export class OnboardingSession {
         // (benefactores), la ciudad detectada queda preseleccionada.
         getAvailableBenefactors(city),
       ]);
+
+      // Guardado de mejor esfuerzo, sin bloquear (ver saveUserLocation en
+      // store.ts) - solo cuando el navegador si mando coordenadas reales.
+      if (opts.lat != null && opts.lng != null) {
+        saveUserLocation(this.userId!, opts.lat, opts.lng).catch((err) => {
+          console.error("No se pudo guardar la ubicacion del usuario (no bloqueante):", err);
+        });
+      }
       if (benefactores.length === 0) {
         await saveCityInterest(this.userId!, city);
         return this.showCityChoice();

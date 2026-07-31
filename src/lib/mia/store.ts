@@ -158,6 +158,24 @@ export async function saveCity(
   }
 }
 
+/**
+ * Guarda la ubicacion (lat/lng) real que el navegador ya capturo para
+ * geolocalizacion - hoy se descartaba despues de resolver solo el nombre de
+ * ciudad. Se guarda de forma persistente para poder calcular cercania real
+ * en una version futura (v2.1+). Mejor esfuerzo, no bloqueante: nunca debe
+ * poder demorar ni romper la respuesta de MIA (mismo patron que
+ * saveWhatsappNumber).
+ */
+export async function saveUserLocation(userId: string, lat: number, lng: number) {
+  const { error } = await supabase
+    .from("users")
+    .update({ last_lat: lat, last_lng: lng, location_captured_at: new Date().toISOString() })
+    .eq("id", userId);
+  if (error) {
+    throw new Error(`No se pudo guardar la ubicacion del usuario: ${error.message}`);
+  }
+}
+
 export async function saveCityInterest(userId: string, city: string) {
   const { error } = await supabase.from("events").insert({
     user_id: userId,
