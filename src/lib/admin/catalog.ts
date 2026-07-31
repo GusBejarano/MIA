@@ -26,12 +26,52 @@ export async function listAllPrograms(): Promise<AdminProgramOption[]> {
   return (data ?? []).map((r) => ({ id: r.id as string, name: r.name as string }));
 }
 
+export type SiteBucket = "mono-sede" | "1-5 sedes" | "6-10 sedes" | "+10 sedes" | "sin clasificar";
+
+/**
+ * Estimado (no un conteo real todavia - benefit_locations recien se esta
+ * poblando) a partir del mismo tipo de señal de texto ya usada en la
+ * limpieza del comodin "Colombia" de v2.0: numero explicito ("+10 puntos",
+ * "134 puntos en 33 ciudades"): usa el numero; una direccion de calle unica
+ * sin mencion de mas sedes: mono-sede; "Varias Tiendas"/similar sin numero,
+ * o sin dato: sin clasificar. Se reemplaza solo cuando haya sedes reales
+ * cargadas en benefit_locations - hasta entonces, sirve para priorizar que
+ * revisar primero (mono-sede primero, por ser el de mayor riesgo/mas barato
+ * de verificar).
+ */
+export function estimateSiteBucket(address: string | null): SiteBucket {
+  if (!address) return "sin clasificar";
+  const text = address.toLowerCase();
+
+  const numMatch = text.match(/(\d+)\s*(puntos?|tiendas?|sedes?|locales|ciudades)/);
+  if (numMatch) {
+    const n = parseInt(numMatch[1], 10);
+    if (n <= 1) return "mono-sede";
+    if (n <= 5) return "1-5 sedes";
+    if (n <= 10) return "6-10 sedes";
+    return "+10 sedes";
+  }
+
+  if (/varias tiendas|multiples?\s+(sedes|puntos|locales|tiendas)|a nivel nacional/.test(text)) {
+    return "sin clasificar";
+  }
+
+  // Direccion de calle concreta (Calle/Carrera/Avenida/Cra/Cll/Diagonal/
+  // Transversal + numero) sin mencion de mas sedes - una sola direccion real.
+  if (/(calle|carrera|avenida|cra\.?|cll\.?|diagonal|transversal|dg\.?|tv\.?)\s*\d/.test(text)) {
+    return "mono-sede";
+  }
+
+  return "sin clasificar";
+}
+
 export type AdminBenefitCard = {
   id: string;
   title: string;
   category: string | null;
   status: "pendiente_revision" | "activo" | "inactivo";
   imageUrl: string | null;
+  siteBucket: SiteBucket;
 };
 
 /**
@@ -54,7 +94,7 @@ export async function listBenefitsForAdmin(
 
   const { data, error } = await supabase
     .from("benefits")
-    .select("id, title, category, status, image_url")
+    .select("id, title, category, status, image_url, address")
     .eq("source_program_id", programId)
     .overlaps("city_list", (scopeKeys ?? []) as string[])
     .order("title");
@@ -66,6 +106,7 @@ export async function listBenefitsForAdmin(
     category: (r.category as string) ?? null,
     status: r.status as AdminBenefitCard["status"],
     imageUrl: (r.image_url as string) ?? null,
+    siteBucket: estimateSiteBucket((r.address as string) ?? null),
   }));
 }
 
@@ -92,6 +133,8 @@ export type AdminBenefitFull = {
   address: string | null;
   hours: string | null;
   research_source: string | null;
+  /** Link a la fuente original de este beneficio - solo uso interno del panel admin, nunca visible en la app publica. */
+  original_source_url: string | null;
   raw_data: unknown;
   updated_at: string;
 };
@@ -99,7 +142,8 @@ export type AdminBenefitFull = {
 const FULL_COLUMNS =
   "id, title, category, city, status, delivery_mode, coverage_confidence, conditions, " +
   "access_type, redemption_instructions, valid_from, valid_until, image_url, company_url, " +
-  "social_media_url, how_to_get_there, address, hours, research_source, raw_data, updated_at";
+  "social_media_url, how_to_get_there, address, hours, research_source, original_source_url, " +
+  "raw_data, updated_at";
 
 export async function getBenefitFull(id: string): Promise<AdminBenefitFull | null> {
   const { data, error } = await supabase

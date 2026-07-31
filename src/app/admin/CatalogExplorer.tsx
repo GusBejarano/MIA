@@ -36,6 +36,13 @@ function toPreviewMessage(b: AdminBenefitFull): DetailSheetMessage {
   };
 }
 
+// Orden de prioridad de revision (mono-sede primero: mayor riesgo de falso
+// positivo, mas barato de verificar - ver v2.0). No es un conteo real
+// todavia (benefit_locations recien se esta poblando), es un estimado por
+// texto (estimateSiteBucket en catalog.ts) - se reemplaza solo cuando haya
+// sedes reales cargadas.
+const SITE_BUCKET_ORDER = ["mono-sede", "1-5 sedes", "6-10 sedes", "+10 sedes", "sin clasificar"];
+
 function firstCategory(category: string | null): string {
   return category?.split(",")[0]?.trim() ?? "(sin categoría)";
 }
@@ -50,6 +57,7 @@ export default function CatalogExplorer({
   const [city, setCity] = useState("");
   const [programId, setProgramId] = useState("");
   const [category, setCategory] = useState("");
+  const [siteBucket, setSiteBucket] = useState("");
   const [benefits, setBenefits] = useState<AdminBenefitCard[]>([]);
   const [loadingGrid, setLoadingGrid] = useState(false);
   const [selected, setSelected] = useState<AdminBenefitFull | null>(null);
@@ -62,9 +70,17 @@ export default function CatalogExplorer({
     return [...set].sort();
   }, [benefits]);
 
+  const siteBucketOptions = useMemo(() => {
+    const set = new Set(benefits.map((b) => b.siteBucket));
+    return SITE_BUCKET_ORDER.filter((b) => set.has(b as AdminBenefitCard["siteBucket"]));
+  }, [benefits]);
+
   const filteredBenefits = useMemo(
-    () => (category ? benefits.filter((b) => firstCategory(b.category) === category) : benefits),
-    [benefits, category]
+    () =>
+      benefits
+        .filter((b) => !category || firstCategory(b.category) === category)
+        .filter((b) => !siteBucket || b.siteBucket === siteBucket),
+    [benefits, category, siteBucket]
   );
 
   async function loadGrid(nextCity: string, nextProgramId: string) {
@@ -88,6 +104,7 @@ export default function CatalogExplorer({
     setCity(value);
     setProgramId("");
     setCategory("");
+    setSiteBucket("");
     setBenefits([]);
     setSelected(null);
   }
@@ -95,6 +112,7 @@ export default function CatalogExplorer({
   function handleProgramChange(value: string) {
     setProgramId(value);
     setCategory("");
+    setSiteBucket("");
     setSelected(null);
     loadGrid(city, value);
   }
@@ -161,6 +179,19 @@ export default function CatalogExplorer({
           {categoryOptions.map((c) => (
             <option key={c} value={c}>
               {c}
+            </option>
+          ))}
+        </select>
+        <select
+          value={siteBucket}
+          onChange={(e) => setSiteBucket(e.target.value)}
+          disabled={benefits.length === 0}
+          className="rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:opacity-50"
+        >
+          <option value="">N° de sedes (estimado): todas</option>
+          {siteBucketOptions.map((b) => (
+            <option key={b} value={b}>
+              {b}
             </option>
           ))}
         </select>

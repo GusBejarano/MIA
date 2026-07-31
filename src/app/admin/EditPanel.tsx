@@ -31,6 +31,7 @@ function toFormState(b: AdminBenefitFull): FormState {
     address: b.address,
     hours: b.hours,
     research_source: b.research_source,
+    original_source_url: b.original_source_url,
     rawDataText: JSON.stringify(b.raw_data ?? {}, null, 2),
   };
 }
@@ -110,6 +111,7 @@ export default function EditPanel({
       address: form.address,
       hours: form.hours,
       research_source: form.research_source,
+      original_source_url: form.original_source_url,
       raw_data: rawData,
     };
 
@@ -246,6 +248,36 @@ export default function EditPanel({
 
       <fieldset className="flex flex-col gap-2">
         <legend className="mb-1 text-xs font-bold uppercase text-zinc-400">Meta</legend>
+
+        {/* Solo uso interno del analista/admin - jamas se muestra en la app
+            publica (ni getBenefitDetail ni DetailSheetMessage lo leen). Fondo
+            gris para que resalte como "herramienta de trabajo", no como un
+            dato mas del beneficio. */}
+        <div className="rounded-lg bg-zinc-100 p-2">
+          <span className="mb-1 block text-xs font-semibold text-zinc-500">
+            Link a la fuente original (solo interno, no se ve en la app)
+          </span>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={form.original_source_url ?? ""}
+              onChange={(e) => setForm({ ...form, original_source_url: e.target.value || null })}
+              placeholder="https://..."
+              className="w-full rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm"
+            />
+            {form.original_source_url && (
+              <a
+                href={form.original_source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white"
+              >
+                Ir →
+              </a>
+            )}
+          </div>
+        </div>
+
         {textField("Fuente de investigación", "research_source", form, setForm, true)}
         <label className="block text-xs">
           <span className="mb-1 block font-semibold text-zinc-500">raw_data (JSON)</span>
