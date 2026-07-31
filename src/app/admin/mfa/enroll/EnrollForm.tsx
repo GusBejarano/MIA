@@ -8,14 +8,8 @@ export default function EnrollForm({ factorId, qrSvg }: { factorId: string; qrSv
 
   return (
     <form action={formAction} className="flex flex-col gap-3">
-      <div
-        className="mx-auto h-48 w-48"
-        // Supabase devuelve el QR como SVG ya armado (auth.mfa.enroll) - no
-        // hay forma de renderizarlo sin dangerouslySetInnerHTML, el
-        // contenido viene de nuestro propio backend de Supabase, no de
-        // input de usuario.
-        dangerouslySetInnerHTML={{ __html: qrSvg }}
-      />
+      {/* eslint-disable-next-line @next/next/no-img-element -- data: URI, no un archivo que next/image pueda optimizar */}
+      <img src={qrSvg} alt="Código QR de verificación en dos pasos" className="mx-auto h-48 w-48" />
       <input type="hidden" name="factorId" value={factorId} />
       <input
         type="text"
