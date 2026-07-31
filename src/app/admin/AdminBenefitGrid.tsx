@@ -38,7 +38,12 @@ export default function AdminBenefitGrid({
           onClick={() => onSelect(card.id)}
           className="flex flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white text-left shadow-sm transition hover:shadow-md active:scale-[0.98]"
         >
-          <div className="relative aspect-[4/3] w-full">
+          {/* Alto fijo (no aspect-ratio) a proposito - mismo patron que
+              BenefitCarousel.tsx (h-20): una foto muy vertical/horizontal no
+              debe poder afectar el alto de la tarjeta ni de la fila del
+              grid. object-contain dentro de BenefitThumbnail ya evita
+              recortar/deformar la imagen misma. */}
+          <div className="relative h-28 w-full">
             <BenefitThumbnail imageUrl={card.thumbUrl} title={card.title} className="h-full w-full" />
             <span
               className={`absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${STATUS_DOT[card.status]}`}
