@@ -68,11 +68,9 @@ function textField(
 export default function EditPanel({
   benefit,
   onSaved,
-  onClose,
 }: {
   benefit: AdminBenefitFull;
   onSaved: (updated: AdminBenefitFull) => void;
-  onClose: () => void;
 }) {
   const [form, setForm] = useState<FormState>(() => toFormState(benefit));
   const [saving, setSaving] = useState(false);
@@ -131,13 +129,6 @@ export default function EditPanel({
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold text-zinc-900">Editar beneficio</h2>
-        <button onClick={onClose} className="text-sm text-zinc-400 hover:text-zinc-900">
-          ✕
-        </button>
-      </div>
-
       {error && <p className="rounded-lg bg-red-50 p-2 text-xs text-red-700">{error}</p>}
       {downgradeWarning && (
         <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-700">

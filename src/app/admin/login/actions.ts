@@ -40,17 +40,13 @@ export async function loginAction(
 
   // step === "totp"
   const code = String(formData.get("code") ?? "");
-  const { error, data } = await supabase.auth.mfa.challengeAndVerify({
+  const { error } = await supabase.auth.mfa.challengeAndVerify({
     factorId: state.factorId,
     code,
   });
-  console.log("[DIAG loginAction totp] error:", error?.message, "verify data aal:", (data as { aal?: string } | null)?.aal);
   if (error) {
     return { step: "totp", factorId: state.factorId, error: "Código incorrecto." };
   }
-
-  const { data: aalAfter, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-  console.log("[DIAG loginAction totp] aal justo despues de verify:", aalAfter, "error:", aalError?.message);
 
   redirect("/admin");
 }

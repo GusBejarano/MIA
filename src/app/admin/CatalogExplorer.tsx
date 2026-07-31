@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
-import BenefitCarousel from "@/components/mia/BenefitCarousel";
+import { useMemo, useState } from "react";
 import DetailSheet from "@/components/mia/DetailSheet";
-import type { CardCarouselMessage, DetailSheetMessage } from "@/lib/mia/uiMessages";
-import { colorForString } from "@/lib/mia/colorPalette";
-import type { AdminBenefitCard, AdminBenefitFull, AdminCityOption, AdminProgramOption } from "@/lib/admin/catalog";
+import type { DetailSheetMessage } from "@/lib/mia/uiMessages";
+import type {
+  AdminBenefitCard,
+  AdminBenefitFull,
+  AdminCityOption,
+  AdminProgramOption,
+} from "@/lib/admin/catalog";
 import { loadBenefitsAction, loadBenefitFullAction } from "./catalogActions";
+import AdminBenefitGrid from "./AdminBenefitGrid";
 import EditPanel from "./EditPanel";
 
 function toPreviewMessage(b: AdminBenefitFull): DetailSheetMessage {
@@ -24,12 +28,16 @@ function toPreviewMessage(b: AdminBenefitFull): DetailSheetMessage {
     details,
     links: { go: b.how_to_get_there, web: b.company_url, social: b.social_media_url },
     rating: 0,
-    // Contexto de admin, no de un beneficiario real - hasSelected=true oculta
+    // Contexto de admin, no de un beneficiario real - hasRelation=true oculta
     // el boton de "declarar relacion" (no aplica aqui), y no se pasa userId
     // a DetailSheet, asi que ninguna accion de usuario final llega a persistir.
     relation: { programId: "", programName: "", hasRelation: true },
     redemptionInstructions: b.redemption_instructions,
   };
+}
+
+function firstCategory(category: string | null): string {
+  return category?.split(",")[0]?.trim() ?? "(sin categoría)";
 }
 
 export default function CatalogExplorer({
@@ -41,11 +49,23 @@ export default function CatalogExplorer({
 }) {
   const [city, setCity] = useState("");
   const [programId, setProgramId] = useState("");
+  const [category, setCategory] = useState("");
   const [benefits, setBenefits] = useState<AdminBenefitCard[]>([]);
   const [loadingGrid, setLoadingGrid] = useState(false);
   const [selected, setSelected] = useState<AdminBenefitFull | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [gridError, setGridError] = useState<string | null>(null);
+
+  const categoryOptions = useMemo(() => {
+    const set = new Set(benefits.map((b) => firstCategory(b.category)));
+    return [...set].sort();
+  }, [benefits]);
+
+  const filteredBenefits = useMemo(
+    () => (category ? benefits.filter((b) => firstCategory(b.category) === category) : benefits),
+    [benefits, category]
+  );
 
   async function loadGrid(nextCity: string, nextProgramId: string) {
     if (!nextCity || !nextProgramId) {
@@ -67,18 +87,21 @@ export default function CatalogExplorer({
   function handleCityChange(value: string) {
     setCity(value);
     setProgramId("");
+    setCategory("");
     setBenefits([]);
     setSelected(null);
   }
 
   function handleProgramChange(value: string) {
     setProgramId(value);
+    setCategory("");
     setSelected(null);
     loadGrid(city, value);
   }
 
   async function handleSelectCard(id: string) {
     setShowPreview(false);
+    setPanelCollapsed(false);
     const full = await loadBenefitFullAction(id);
     setSelected(full);
   }
@@ -88,23 +111,17 @@ export default function CatalogExplorer({
     setBenefits((prev) =>
       prev.map((b) =>
         b.id === updated.id
-          ? { ...b, title: updated.title, category: updated.category, status: updated.status, imageUrl: updated.image_url }
+          ? {
+              ...b,
+              title: updated.title,
+              category: updated.category,
+              status: updated.status,
+              imageUrl: updated.image_url,
+            }
           : b
       )
     );
   }
-
-  const carouselMessage: CardCarouselMessage = {
-    type: "card_carousel",
-    cards: benefits.map((b) => ({
-      id: b.id,
-      title: b.title,
-      tag: (b.category ?? "").split(",")[0]?.trim() ?? b.status,
-      color: colorForString(programId),
-      thumbUrl: b.imageUrl,
-      rating: 0,
-    })),
-  };
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -134,41 +151,73 @@ export default function CatalogExplorer({
             </option>
           ))}
         </select>
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          disabled={benefits.length === 0}
+          className="rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:opacity-50"
+        >
+          <option value="">Todas las categorías</option>
+          {categoryOptions.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="flex-1 p-4">
         {loadingGrid && <p className="text-sm text-zinc-400">Cargando...</p>}
         {gridError && <p className="text-sm text-red-600">{gridError}</p>}
-        {!loadingGrid && city && programId && benefits.length === 0 && !gridError && (
-          <p className="text-sm text-zinc-400">No hay beneficios de este benefactor en esta ciudad.</p>
+        {!loadingGrid && city && programId && filteredBenefits.length === 0 && !gridError && (
+          <p className="text-sm text-zinc-400">No hay beneficios que coincidan con este filtro.</p>
         )}
-        <BenefitCarousel message={carouselMessage} onSelect={(id) => handleSelectCard(id)} />
+        <AdminBenefitGrid
+          cards={filteredBenefits.map((b) => ({
+            id: b.id,
+            title: b.title,
+            tag: firstCategory(b.category),
+            status: b.status,
+            thumbUrl: b.imageUrl,
+          }))}
+          onSelect={handleSelectCard}
+        />
       </div>
 
-      {selected && (
+      {selected && panelCollapsed && (
+        <button
+          onClick={() => setPanelCollapsed(false)}
+          className="fixed inset-y-0 right-0 z-40 flex w-10 flex-col items-center justify-center gap-2 border-l border-zinc-200 bg-white shadow-xl hover:bg-zinc-50"
+          title="Mostrar detalle de beneficio"
+        >
+          <span className="text-lg">←</span>
+        </button>
+      )}
+
+      {selected && !panelCollapsed && (
         <div className="fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-zinc-200 bg-white shadow-xl sm:w-[26rem]">
           <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
             <button
-              onClick={() => setShowPreview(true)}
-              className="text-xs font-semibold text-mia-cyan underline-offset-2 hover:underline"
+              onClick={() => setPanelCollapsed(true)}
+              className="text-lg text-zinc-400 hover:text-zinc-900"
+              title="Minimizar"
             >
-              Ver como lo ve el usuario final
+              →
+            </button>
+            <h2 className="text-sm font-bold text-zinc-900">Detalle de Beneficio</h2>
+            <button
+              onClick={() => setShowPreview(true)}
+              className="flex items-center gap-1 rounded-lg border border-zinc-200 px-2 py-1 text-xs font-semibold text-mia-cyan hover:bg-zinc-50"
+            >
+              <span>👁️</span> Usuario Final
             </button>
           </div>
-          <EditPanel
-            key={selected.id}
-            benefit={selected}
-            onSaved={handleSaved}
-            onClose={() => setSelected(null)}
-          />
+          <EditPanel key={selected.id} benefit={selected} onSaved={handleSaved} />
         </div>
       )}
 
       {selected && showPreview && (
-        <DetailSheet
-          message={toPreviewMessage(selected)}
-          onClose={() => setShowPreview(false)}
-        />
+        <DetailSheet message={toPreviewMessage(selected)} onClose={() => setShowPreview(false)} />
       )}
     </div>
   );
