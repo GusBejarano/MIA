@@ -2,7 +2,7 @@
 
 Frontend y motor conversacional de MIA para [descuentosinteligentes.com](https://descuentosinteligentes.com), construido con Next.js (App Router) y desplegado en Netlify.
 
-Versión actual: **1.5.0** (crecimiento del catálogo, tiempos de respuesta, instalación en el celular) — despliegue en curso solo a Dev.
+Versión actual: **2.0.0** (modelo de cobertura geográfica por sede — `delivery_mode`/`coverage_confidence`/`benefit_locations`, ubicación persistente del usuario, panel de administración `/admin` con auth + 2FA y catálogo Ciudad→Benefactor→edición en vivo — Fase 3 de sedes en el panel admin, pendiente de diseño de UX).
 
 ## Stack
 
