@@ -12,6 +12,11 @@ import { getPosition, haversineKm } from "@/lib/mia/geolocationClient";
 // no es una constante magica intocable.
 const MANY_SEDES_THRESHOLD = 10;
 
+// Cuantas sedes se muestran destacadas de una vez dentro de la seccion
+// desplegada, antes de agrupar el resto bajo "+N mas sedes" - mismo
+// criterio que MANY_SEDES_THRESHOLD, valor razonable y facil de ajustar.
+const FEATURED_SEDES_COUNT = 5;
+
 function shuffle<T>(arr: T[]): T[] {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i--) {
@@ -48,6 +53,7 @@ export default function DetailSheet({
   const [locationGranted, setLocationGranted] = useState(message.locationPermissionGranted ?? false);
   const [showSedes, setShowSedes] = useState(false);
   const [showLocationAsk, setShowLocationAsk] = useState(false);
+  const [showAllSedes, setShowAllSedes] = useState(false);
   const [userPosition, setUserPosition] = useState<{ lat: number; lng: number } | null>(null);
   const [locationBlocked, setLocationBlocked] = useState(false);
 
@@ -145,6 +151,17 @@ export default function DetailSheet({
           haversineKm(userPosition.lat, userPosition.lng, b.lat, b.lng)
       )
     : sedesWithCoords;
+
+  // Una sola lista (ya no agrupada por "tiene coordenadas o no"): con
+  // ubicacion, mas cercana primero y las sin coordenadas al final (no hay
+  // como ordenarlas por distancia); sin ubicacion, orden aleatorio (regla 6
+  // del diseno). El agrupador es por CANTIDAD - se destacan las primeras
+  // FEATURED_SEDES_COUNT, el resto colapsa bajo "+N mas sedes".
+  const orderedSedes = userPosition
+    ? [...sortedSedesWithCoords, ...sedesWithoutCoords]
+    : shuffledSedes;
+  const visibleSedes = showAllSedes ? orderedSedes : orderedSedes.slice(0, FEATURED_SEDES_COUNT);
+  const hiddenSedesCount = orderedSedes.length - visibleSedes.length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
@@ -288,82 +305,42 @@ export default function DetailSheet({
                 </div>
               )}
 
-              {userPosition ? (
-                <>
-                  {sortedSedesWithCoords.length > 0 && (
-                  <ul className="flex flex-col gap-1.5">
-                    {sortedSedesWithCoords.map((s, i) => (
-                      <li
-                        key={s.id}
-                        className="flex items-center justify-between rounded-lg bg-white px-2.5 py-2 text-xs"
-                      >
-                        <span className="font-semibold text-mia-ink">
-                          Sede {i + 1} ·{" "}
-                          {haversineKm(userPosition.lat, userPosition.lng, s.lat, s.lng).toFixed(1)}{" "}
-                          km
-                        </span>
-                        <a
-                          href={s.mapsUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-bold text-mia-cyan"
-                          aria-label="Abrir en Google Maps"
-                        >
-                          Ir ↗
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                  )}
-                  {sedesWithoutCoords.length > 0 && (
-                    <>
-                      {sortedSedesWithCoords.length > 0 && (
-                        <div className="mb-1 mt-3 text-[11px] font-bold uppercase text-zinc-400">
-                          Otras sedes
-                        </div>
+              <ul className="flex flex-col gap-1.5">
+                {visibleSedes.map((s, i) => (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between rounded-lg bg-white px-2.5 py-2 text-xs"
+                  >
+                    <span className="font-semibold text-mia-ink">
+                      Sede {i + 1}
+                      {userPosition && s.lat != null && s.lng != null && (
+                        <>
+                          {" "}
+                          · {haversineKm(userPosition.lat, userPosition.lng, s.lat, s.lng).toFixed(1)} km
+                        </>
                       )}
-                      <ul className="flex flex-col gap-1.5">
-                        {sedesWithoutCoords.map((s, i) => (
-                          <li
-                            key={s.id}
-                            className="flex items-center justify-between rounded-lg bg-white px-2.5 py-2 text-xs"
-                          >
-                            <span className="font-semibold text-mia-ink">Sede {i + 1}</span>
-                            <a
-                              href={s.mapsUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="font-bold text-mia-cyan"
-                              aria-label="Abrir en Google Maps"
-                            >
-                              Ir ↗
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                </>
-              ) : (
-                <ul className="flex flex-col gap-1.5">
-                  {shuffledSedes.map((s, i) => (
-                    <li
-                      key={s.id}
-                      className="flex items-center justify-between rounded-lg bg-white px-2.5 py-2 text-xs"
+                    </span>
+                    <a
+                      href={s.mapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-bold text-mia-cyan"
+                      aria-label="Abrir en Google Maps"
                     >
-                      <span className="font-semibold text-mia-ink">Sede {i + 1}</span>
-                      <a
-                        href={s.mapsUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-bold text-mia-cyan"
-                        aria-label="Abrir en Google Maps"
-                      >
-                        Ir ↗
-                      </a>
-                    </li>
-                  ))}
-                </ul>
+                      Ir ↗
+                    </a>
+                  </li>
+                ))}
+              </ul>
+
+              {hiddenSedesCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllSedes(true)}
+                  className="mt-2 w-full rounded-lg border border-zinc-200 bg-white py-1.5 text-xs font-bold text-mia-violet"
+                >
+                  +{hiddenSedesCount} más sedes
+                </button>
               )}
             </div>
           )}
