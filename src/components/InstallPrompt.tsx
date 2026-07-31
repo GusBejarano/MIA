@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 // Chrome/Android disparan este evento cuando la pagina cumple los
@@ -48,6 +49,7 @@ function isStandalone(): boolean {
  * En desktop, o si ya esta instalada, no se muestra nada.
  */
 export default function InstallPrompt() {
+  const pathname = usePathname();
   const [platform, setPlatform] = useState<Platform>("other");
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [visible, setVisible] = useState(false);
@@ -94,6 +96,8 @@ export default function InstallPrompt() {
     dismiss();
   }
 
+  // El panel /admin es un producto aparte, sin nada de la UI publica de MIA.
+  if (pathname?.startsWith("/admin")) return null;
   if (!visible) return null;
 
   return (
