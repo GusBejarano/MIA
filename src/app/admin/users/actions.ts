@@ -24,12 +24,13 @@ export async function inviteAdminUserAction(
     return { error: "Completa todos los campos." };
   }
 
-  // El link del correo tiene que apuntar al callback (que hace el
-  // intercambio de codigo -> sesion, ver src/app/admin/auth/callback), no
-  // directo a /admin/login - esa pagina no procesa el "?code=" de la
-  // invitacion.
+  // Los links de invitacion (a diferencia de un reset de password) son
+  // siempre de flujo implicito (token en el fragmento de la URL, nunca
+  // "?code=") - por eso apuntan a /admin/auth/confirm (pagina de cliente
+  // que lee el hash), no a /admin/auth/callback (Route Handler para
+  // "?code=", que nunca puede ver el fragmento).
   const { data, error } = await supabase.auth.admin.inviteUserByEmail(email, {
-    redirectTo: "https://descuentosinteligentes.com/admin/auth/callback",
+    redirectTo: "https://descuentosinteligentes.com/admin/auth/confirm",
   });
   if (error || !data.user) {
     return { error: `No se pudo invitar: ${error?.message ?? "error desconocido"}` };

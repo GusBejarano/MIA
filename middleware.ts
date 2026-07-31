@@ -8,6 +8,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const PUBLIC_ADMIN_PATHS = [
   "/admin/login",
   "/admin/auth/callback",
+  "/admin/auth/confirm",
   "/admin/set-password",
   "/admin/mfa/enroll",
 ];
