@@ -41,7 +41,19 @@ export async function middleware(request: NextRequest) {
 
   const {
     data: { user },
+    error: userError,
   } = await supabase.auth.getUser();
+
+  console.log(
+    "[DIAG middleware]",
+    request.nextUrl.pathname,
+    "user:",
+    user?.id,
+    "userError:",
+    userError?.message,
+    "cookies:",
+    request.cookies.getAll().map((c) => c.name)
+  );
 
   if (!user) {
     return NextResponse.redirect(new URL("/admin/login", request.url));
@@ -50,7 +62,8 @@ export async function middleware(request: NextRequest) {
   // Exige 2FA verificado (aal2), no solo password (aal1) - un usuario que
   // aun no completo el reto TOTP de esta sesion no debe poder entrar al
   // panel, aunque su password ya haya sido correcto.
-  const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  const { data: aal, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  console.log("[DIAG middleware] aal:", aal, "aalError:", aalError?.message);
   if (aal?.currentLevel !== "aal2") {
     return NextResponse.redirect(new URL("/admin/login", request.url));
   }

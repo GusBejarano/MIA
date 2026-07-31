@@ -16,9 +16,12 @@ export default async function AdminLoginPage() {
 
   if (user) {
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    console.log("[DIAG /admin/login page] user:", user.id, "aal:", aal);
     if (aal?.currentLevel === "aal2") {
       redirect("/admin");
     }
+  } else {
+    console.log("[DIAG /admin/login page] no user");
   }
 
   return <LoginForm />;
