@@ -22,11 +22,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const currentUser = await getCurrentAdminUser();
 
   if (!currentUser) {
-    return <div className="min-h-screen bg-zinc-50">{children}</div>;
+    return <div className="admin-panel min-h-screen bg-zinc-50">{children}</div>;
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="admin-panel min-h-screen bg-zinc-50">
       <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-3">
         <div className="flex items-center gap-2">
           <Image
@@ -44,7 +44,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               </span>
             </div>
             <p className="text-[11px] text-zinc-400">MIA by Descuentos Inteligentes</p>
-            <p className="text-[10px] text-zinc-300">{VERSION_LABEL}</p>
+            <p className="text-[10px] text-zinc-400">{VERSION_LABEL}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">

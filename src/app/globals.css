@@ -36,3 +36,15 @@ body {
   background-clip: text;
   color: transparent;
 }
+
+/* /admin es un producto completamente aparte (fondos claros fijos,
+   bg-white/bg-zinc-50 en todo el panel) - sin esto, un celular con modo
+   oscuro del sistema activado hereda --foreground: #ededed (casi blanco,
+   pensado para texto claro sobre fondo oscuro) y el texto queda casi
+   invisible sobre esos fondos claros fijos. Forzamos claro siempre, sin
+   importar el tema del sistema (afecta tambien el color nativo de
+   selects/inputs, no solo el texto propio). */
+.admin-panel {
+  color-scheme: light;
+  color: #0f0b1f;
+}
