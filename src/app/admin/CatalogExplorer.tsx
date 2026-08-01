@@ -243,7 +243,7 @@ export default function CatalogExplorer({
               <span>👁️</span> Usuario Final
             </button>
           </div>
-          <EditPanel key={selected.id} benefit={selected} onSaved={handleSaved} />
+          <EditPanel key={selected.id} benefit={selected} city={city} onSaved={handleSaved} />
         </div>
       )}
 

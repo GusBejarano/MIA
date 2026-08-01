@@ -190,14 +190,30 @@ export type BenefitLocation = {
  * patron que getBenefitsForCategory: resolve_city_scope + .overlaps() sobre
  * la columna _list generada) - un beneficio que cubre varias ciudades a la
  * vez (ej. Kosta Azul) solo devuelve las sedes de la ciudad actual, no todas.
- * benefit_locations recien se esta poblando (Fase 4 del panel admin, CRUD
- * de sedes) - hoy puede devolver un array vacio para cualquier beneficio,
- * eso es esperado, no un error.
+ *
+ * Lee por benefit_location_links (Admin v2.0, comercio compartido entre
+ * benefactores) - NO por benefit_locations.benefit_id directo (columna
+ * legacy que se retira en una fase posterior, una vez confirmado esto en
+ * produccion). Un beneficio que todavia no tiene ningun vinculo en la tabla
+ * puente (no migrado a comercio, la gran mayoria del catalogo hoy) devuelve
+ * simplemente [] - el boton "Como llegar" cae solo al campo legacy de
+ * benefits (how_to_get_there) cuando sedes viene vacio, sin cambio de
+ * comportamiento para el catalogo no migrado.
  */
 export async function getBenefitLocations(
   benefitId: string,
   city: string
 ): Promise<BenefitLocation[]> {
+  const { data: linkRows, error: linkError } = await supabase
+    .from("benefit_location_links")
+    .select("location_id")
+    .eq("benefit_id", benefitId);
+  if (linkError) {
+    throw new Error(`No se pudieron consultar los vínculos de sedes: ${linkError.message}`);
+  }
+  const locationIds = (linkRows ?? []).map((r) => r.location_id as string);
+  if (locationIds.length === 0) return [];
+
   const { data: scopeKeys, error: scopeError } = await supabase.rpc("resolve_city_scope", {
     target_city: city,
   });
@@ -208,7 +224,7 @@ export async function getBenefitLocations(
   const { data, error } = await supabase
     .from("benefit_locations")
     .select("id, maps_url, lat, lng")
-    .eq("benefit_id", benefitId)
+    .in("id", locationIds)
     .overlaps("city_list", (scopeKeys ?? []) as string[]);
   if (error) {
     throw new Error(`No se pudieron consultar las sedes: ${error.message}`);
