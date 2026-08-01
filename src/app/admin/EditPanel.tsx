@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { AdminBenefitFull, AdminBenefitPatch } from "@/lib/admin/catalog";
-import { previewCoverageGate } from "@/lib/admin/catalog";
+import { previewCoverageGate } from "@/lib/admin/coverageGate";
 import { saveBenefitAction } from "./catalogActions";
 import SedesTab from "./SedesTab";
 
