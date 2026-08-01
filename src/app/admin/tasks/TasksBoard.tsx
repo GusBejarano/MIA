@@ -1,11 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { AdminTaskSummary } from "@/lib/admin/tasks";
 import type { AdminCityOption, AdminProgramOption } from "@/lib/admin/catalog";
 import { createTaskAction, type AnalystOption } from "../tasksActions";
+import { loadBenefitsAction } from "../catalogActions";
+
+function firstCategory(category: string | null): string {
+  return category?.split(",")[0]?.trim() ?? "";
+}
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -60,16 +65,49 @@ function CreateTaskForm({
   const [city, setCity] = useState("");
   const [programId, setProgramId] = useState("");
   const [category, setCategory] = useState("");
+  const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(false);
   const [assignedTo, setAssignedTo] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Categorias reales del alcance elegido (ciudad+benefactor) - nunca
+  // texto libre, para evitar errores humanos al escribir (ej. "Salud" vs
+  // "salud " con espacio) que dejarian la tarea vacia sin avisar.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      setCategory("");
+      if (!city || !programId) {
+        setCategoryOptions([]);
+        return;
+      }
+      setLoadingCategories(true);
+      try {
+        const rows = await loadBenefitsAction(programId, city);
+        if (cancelled) return;
+        const set = new Set(rows.map((r) => firstCategory(r.category)).filter(Boolean));
+        setCategoryOptions([...set].sort());
+      } catch {
+        if (!cancelled) setCategoryOptions([]);
+      } finally {
+        if (!cancelled) setLoadingCategories(false);
+      }
+    }
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [city, programId]);
 
   async function handleCreate() {
     if (!city || !programId || !assignedTo) return;
     setCreating(true);
     setError(null);
     try {
-      await createTaskAction(programId, city, category.trim() || null, assignedTo);
+      await createTaskAction(programId, city, category || null, assignedTo);
       setCategory("");
       onCreated();
     } catch (err) {
@@ -120,13 +158,21 @@ function CreateTaskForm({
             </option>
           ))}
         </select>
-        <input
-          type="text"
+        <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
-          placeholder="Categoría (opcional)"
-          className="rounded-lg border border-zinc-300 px-2 py-1.5"
-        />
+          disabled={!city || !programId || loadingCategories}
+          className="rounded-lg border border-zinc-300 px-2 py-1.5 disabled:opacity-50"
+        >
+          <option value="">
+            {loadingCategories ? "Cargando categorías..." : "Todas las categorías"}
+          </option>
+          {categoryOptions.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
         <select
           value={assignedTo}
           onChange={(e) => setAssignedTo(e.target.value)}
