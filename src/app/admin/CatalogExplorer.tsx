@@ -10,11 +10,13 @@ import type {
   AdminProgramOption,
 } from "@/lib/admin/catalog";
 import type { BenefitLocation } from "@/lib/mia/discovery";
+import type { BenefitAuditInfo } from "@/lib/admin/audit";
 import {
   loadBenefitsAction,
   loadBenefitFullAction,
   loadBenefitLocationsAction,
 } from "./catalogActions";
+import { getAuditStatusBulkAction, getAuditStatusAction } from "./auditActions";
 import AdminBenefitGrid from "./AdminBenefitGrid";
 import EditPanel from "./EditPanel";
 
@@ -68,6 +70,9 @@ export default function CatalogExplorer({
   const [category, setCategory] = useState("");
   const [siteBucket, setSiteBucket] = useState("");
   const [benefits, setBenefits] = useState<AdminBenefitCard[]>([]);
+  const [auditStatusByBenefit, setAuditStatusByBenefit] = useState<
+    Record<string, BenefitAuditInfo>
+  >({});
   const [loadingGrid, setLoadingGrid] = useState(false);
   const [selected, setSelected] = useState<AdminBenefitFull | null>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -104,6 +109,9 @@ export default function CatalogExplorer({
     try {
       const rows = await loadBenefitsAction(nextProgramId, nextCity);
       setBenefits(rows);
+      getAuditStatusBulkAction(rows.map((r) => r.id))
+        .then(setAuditStatusByBenefit)
+        .catch(() => setAuditStatusByBenefit({}));
     } catch (err) {
       setGridError(err instanceof Error ? err.message : "No se pudieron cargar los beneficios.");
     } finally {
@@ -147,6 +155,12 @@ export default function CatalogExplorer({
       setLoadingPreview(false);
     }
     setShowPreview(true);
+  }
+
+  function handleAudited(benefitId: string) {
+    getAuditStatusAction(benefitId)
+      .then((info) => setAuditStatusByBenefit((prev) => ({ ...prev, [benefitId]: info })))
+      .catch(() => {});
   }
 
   function handleSaved(updated: AdminBenefitFull) {
@@ -235,6 +249,7 @@ export default function CatalogExplorer({
             tag: firstCategory(b.category),
             status: b.status,
             thumbUrl: b.imageUrl,
+            auditStatus: auditStatusByBenefit[b.id]?.status,
           }))}
           onSelect={handleSelectCard}
         />
@@ -269,7 +284,13 @@ export default function CatalogExplorer({
               <span>👁️</span> {loadingPreview ? "Cargando..." : "Usuario Final"}
             </button>
           </div>
-          <EditPanel key={selected.id} benefit={selected} city={city} onSaved={handleSaved} />
+          <EditPanel
+            key={selected.id}
+            benefit={selected}
+            city={city}
+            onSaved={handleSaved}
+            onAudited={() => handleAudited(selected.id)}
+          />
         </div>
       )}
 

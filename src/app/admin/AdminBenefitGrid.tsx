@@ -8,6 +8,8 @@ export type AdminGridCard = {
   tag: string;
   status: "pendiente_revision" | "activo" | "inactivo";
   thumbUrl: string | null;
+  /** Admin v2.1 - ausente en pantallas que todavia no cargan este dato. */
+  auditStatus?: "auditado" | "sin_auditar";
 };
 
 const STATUS_DOT: Record<AdminGridCard["status"], string> = {
@@ -49,6 +51,16 @@ export default function AdminBenefitGrid({
               className={`absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${STATUS_DOT[card.status]}`}
               title={card.status}
             />
+            {/* Esquina opuesta al dot de status (activo/pendiente/inactivo)
+                para que no se pisen - indicador de auditoria (Admin v2.1). */}
+            {card.auditStatus && (
+              <span
+                className={`absolute left-1.5 top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${
+                  card.auditStatus === "auditado" ? "bg-emerald-500" : "bg-zinc-300"
+                }`}
+                title={card.auditStatus === "auditado" ? "Auditado" : "Sin auditar"}
+              />
+            )}
           </div>
           <div className="px-2.5 py-2">
             <span className="mb-1 inline-block rounded-md bg-mia-violet/10 px-1.5 py-0.5 text-[10px] font-extrabold text-mia-violet">

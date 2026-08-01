@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AdminBenefitFull, AdminBenefitPatch } from "@/lib/admin/catalog";
+import type { BenefitAuditInfo } from "@/lib/admin/audit";
 import { previewCoverageGate } from "@/lib/admin/coverageGate";
 import { saveBenefitAction } from "./catalogActions";
+import { getAuditStatusAction, markBenefitAuditedAction } from "./auditActions";
 import SedesTab from "./SedesTab";
 
 const STATUS_OPTIONS = ["pendiente_revision", "activo", "inactivo"] as const;
@@ -72,17 +74,27 @@ function textField(
 export default function EditPanel({
   benefit,
   city,
+  taskId,
   onSaved,
+  onAudited,
 }: {
   benefit: AdminBenefitFull;
   city: string;
+  /** Presente solo cuando se edita desde la pestaña de una tarea (Admin
+   * v2.1) - queda registrado en benefit_audit_log para saber que auditoria
+   * salio de que tarea. */
+  taskId?: string;
   onSaved: (updated: AdminBenefitFull) => void;
+  onAudited?: () => void;
 }) {
   const [form, setForm] = useState<FormState>(() => toFormState(benefit));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downgradeWarning, setDowngradeWarning] = useState(false);
   const [activeTab, setActiveTab] = useState<"datos" | "sedes">("datos");
+  const [auditInfo, setAuditInfo] = useState<BenefitAuditInfo | null>(null);
+  const [auditing, setAuditing] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
   const coveragePreview = useMemo(
     () => previewCoverageGate(form.city, form.delivery_mode, form.coverage_confidence),
@@ -93,6 +105,39 @@ export default function EditPanel({
   // guardar primero) - regla del diseno de la pestaña Sedes.
   const showSedesTab =
     form.delivery_mode === "presencial" || form.delivery_mode === "online_y_presencial";
+
+  // Se recalcula al volver de la pestaña Sedes (agregar/quitar una sede no
+  // cambia merchant_id ni delivery_mode, asi que activeTab es el gancho que
+  // detecta ese caso) - lee la vista benefit_audit_status, nunca un booleano
+  // guardado (Admin v2.1).
+  useEffect(() => {
+    let cancelled = false;
+    getAuditStatusAction(benefit.id)
+      .then((info) => {
+        if (!cancelled) setAuditInfo(info);
+      })
+      .catch(() => {
+        if (!cancelled) setAuditInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [benefit.id, benefit.merchant_id, form.delivery_mode, activeTab]);
+
+  async function handleMarkAudited() {
+    setAuditing(true);
+    setAuditError(null);
+    try {
+      await markBenefitAuditedAction(benefit.id, taskId);
+      const info = await getAuditStatusAction(benefit.id);
+      setAuditInfo(info);
+      onAudited?.();
+    } catch (err) {
+      setAuditError(err instanceof Error ? err.message : "No se pudo registrar la auditoría.");
+    } finally {
+      setAuditing(false);
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -351,13 +396,35 @@ export default function EditPanel({
         </label>
       </fieldset>
 
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="sticky bottom-0 rounded-lg bg-zinc-900 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
-          >
-            {saving ? "Guardando..." : "Guardar cambios"}
-          </button>
+          {auditError && <p className="rounded-lg bg-red-50 p-2 text-xs text-red-700">{auditError}</p>}
+          {auditInfo && !auditInfo.meetsCondition && (
+            <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-700">
+              Este beneficio es presencial y no tiene comercio/sedes vinculadas. Complétalo en la
+              pestaña Sedes antes de marcarlo auditado.
+            </p>
+          )}
+          {auditInfo?.status === "auditado" && auditInfo.lastAuditedAt && (
+            <p className="text-[11px] text-zinc-400">
+              Última auditoría: {new Date(auditInfo.lastAuditedAt).toLocaleString("es-CO")}
+            </p>
+          )}
+
+          <div className="sticky bottom-0 flex gap-2 bg-white pt-1">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex-1 rounded-lg bg-zinc-900 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {saving ? "Guardando..." : "Guardar cambios"}
+            </button>
+            <button
+              onClick={handleMarkAudited}
+              disabled={auditing || !auditInfo?.meetsCondition}
+              className="rounded-lg border border-emerald-600 px-3 py-2.5 text-sm font-semibold text-emerald-700 disabled:opacity-50"
+            >
+              {auditing ? "Registrando..." : "Marcar como auditado"}
+            </button>
+          </div>
         </>
       )}
     </div>

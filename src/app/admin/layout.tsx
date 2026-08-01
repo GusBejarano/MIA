@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { getCurrentAdminUser } from "@/lib/admin/currentAdminUser";
 import { logoutAction } from "./actions";
+import AdminNav from "./AdminNav";
 
 // Mismo mecanismo de metadatos de build que MiaChat.tsx (ver next.config.ts)
 // - se repite aqui en vez de importarlo porque ese archivo es "use client"
@@ -60,6 +61,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </form>
         </div>
       </header>
+      <AdminNav role={currentUser.role} />
       <main>{children}</main>
     </div>
   );

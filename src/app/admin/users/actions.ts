@@ -49,3 +49,38 @@ export async function inviteAdminUserAction(
   revalidatePath("/admin/users");
   return undefined;
 }
+
+async function requireAdminCaller() {
+  const currentUser = await getCurrentAdminUser();
+  if (!currentUser || currentUser.role !== "admin") {
+    throw new Error("No tienes permiso para administrar usuarios.");
+  }
+  return currentUser;
+}
+
+export async function updateUserRoleAction(
+  userId: string,
+  role: "admin" | "analista"
+): Promise<void> {
+  const currentUser = await requireAdminCaller();
+  if (currentUser.id === userId) {
+    throw new Error("No puedes cambiar tu propio rol.");
+  }
+
+  const { error } = await supabase.from("admin_users").update({ role }).eq("id", userId);
+  if (error) throw new Error(`No se pudo actualizar el rol: ${error.message}`);
+  revalidatePath("/admin/users");
+}
+
+/** No se borra el registro (regla 15/17 de v2.1) - se desactiva, para no
+ * perder el historial de tareas/auditorias que haya hecho ese usuario. */
+export async function setUserActiveAction(userId: string, isActive: boolean): Promise<void> {
+  const currentUser = await requireAdminCaller();
+  if (currentUser.id === userId) {
+    throw new Error("No puedes desactivar tu propia cuenta.");
+  }
+
+  const { error } = await supabase.from("admin_users").update({ is_active: isActive }).eq("id", userId);
+  if (error) throw new Error(`No se pudo actualizar el usuario: ${error.message}`);
+  revalidatePath("/admin/users");
+}
