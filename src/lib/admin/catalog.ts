@@ -94,20 +94,52 @@ export async function listBenefitsForAdmin(
 
   const { data, error } = await supabase
     .from("benefits")
-    .select("id, title, category, status, image_url, address")
+    .select("id, title, category, status, image_url, address, merchant_id")
     .eq("source_program_id", programId)
     .overlaps("city_list", (scopeKeys ?? []) as string[])
     .order("title");
   if (error) throw new Error(`No se pudieron consultar los beneficios: ${error.message}`);
 
-  return (data ?? []).map((r) => ({
-    id: r.id as string,
-    title: r.title as string,
-    category: (r.category as string) ?? null,
-    status: r.status as AdminBenefitCard["status"],
-    imageUrl: (r.image_url as string) ?? null,
-    siteBucket: estimateSiteBucket((r.address as string) ?? null),
-  }));
+  // Conteo real de sedes (Admin v2.0, comercio compartido) para los
+  // beneficios ya migrados (merchant_id) - reemplaza la heuristica de texto
+  // de estimateSiteBucket solo para esos, acotado a la misma ciudad que el
+  // resto del listado (mismo patron benefit_location_links + overlaps de
+  // city_list que listMerchantLocations/getBenefitLocations).
+  const benefitIds = (data ?? []).map((r) => r.id as string);
+  const { data: linkRows, error: linkError } = await supabase
+    .from("benefit_location_links")
+    .select("benefit_id, benefit_locations!inner(city_list)")
+    .in("benefit_id", benefitIds)
+    .overlaps("benefit_locations.city_list", (scopeKeys ?? []) as string[]);
+  if (linkError) throw new Error(`No se pudieron contar las sedes reales: ${linkError.message}`);
+  const realCountByBenefit = new Map<string, number>();
+  for (const row of linkRows ?? []) {
+    const id = row.benefit_id as string;
+    realCountByBenefit.set(id, (realCountByBenefit.get(id) ?? 0) + 1);
+  }
+
+  return (data ?? []).map((r) => {
+    const id = r.id as string;
+    const siteBucket = r.merchant_id
+      ? bucketFromLocationCount(realCountByBenefit.get(id) ?? 0)
+      : estimateSiteBucket((r.address as string) ?? null);
+    return {
+      id,
+      title: r.title as string,
+      category: (r.category as string) ?? null,
+      status: r.status as AdminBenefitCard["status"],
+      imageUrl: (r.image_url as string) ?? null,
+      siteBucket,
+    };
+  });
+}
+
+function bucketFromLocationCount(n: number): SiteBucket {
+  if (n === 0) return "sin clasificar";
+  if (n === 1) return "mono-sede";
+  if (n <= 5) return "1-5 sedes";
+  if (n <= 10) return "6-10 sedes";
+  return "+10 sedes";
 }
 
 // Todos los campos editables de benefits - deliberadamente excluye
@@ -193,6 +225,25 @@ export function extractLatLngFromMapsUrl(url: string): { lat: number | null; lng
   const match = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
   if (!match) return { lat: null, lng: null };
   return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
+}
+
+/** Links cortos (maps.app.goo.gl) no traen coordenadas en el texto - no
+ * requiere geocodificacion paga, solo seguir la redireccion HTTP (gratis)
+ * hasta la URL larga real, y aplicarle el mismo regex de siempre. Corre en
+ * el servidor (Server Action) porque un fetch desde el navegador a un
+ * dominio externo chocaria con CORS. */
+export async function resolveMapsUrlLatLng(
+  url: string
+): Promise<{ lat: number | null; lng: number | null }> {
+  const direct = extractLatLngFromMapsUrl(url);
+  if (direct.lat !== null && direct.lng !== null) return direct;
+
+  try {
+    const response = await fetch(url, { redirect: "follow" });
+    return extractLatLngFromMapsUrl(response.url);
+  } catch {
+    return { lat: null, lng: null };
+  }
 }
 
 export type MerchantSearchResult = {

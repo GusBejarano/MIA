@@ -1,6 +1,7 @@
 "use server";
 
 import { getCurrentAdminUser } from "@/lib/admin/currentAdminUser";
+import { getBenefitLocations, type BenefitLocation } from "@/lib/mia/discovery";
 import {
   listBenefitsForAdmin,
   getBenefitFull,
@@ -13,6 +14,7 @@ import {
   toggleLocationLink,
   upsertLocation,
   deleteLocation,
+  resolveMapsUrlLatLng,
   type AdminBenefitCard,
   type AdminBenefitFull,
   type AdminBenefitPatch,
@@ -46,6 +48,18 @@ export async function saveBenefitAction(
 ): Promise<AdminBenefitFull> {
   await requireAdminUser();
   return updateBenefitAdmin(id, patch);
+}
+
+/** Sedes reales de un beneficio en una ciudad - usada por el preview
+ * "👁️ Usuario Final" del panel admin, para que muestre el mismo boton de
+ * sedes (Ver sedes (N) / +N puntos) que vera un usuario real, en vez de
+ * caer siempre al "Como llegar" legacy de una sola sede. */
+export async function loadBenefitLocationsAction(
+  benefitId: string,
+  city: string
+): Promise<BenefitLocation[]> {
+  await requireAdminUser();
+  return getBenefitLocations(benefitId, city);
 }
 
 // ============================================================
@@ -104,4 +118,11 @@ export async function upsertLocationAction(input: LocationInput): Promise<string
 export async function deleteLocationAction(id: string): Promise<void> {
   await requireAdminUser();
   return deleteLocation(id);
+}
+
+export async function resolveMapsUrlLatLngAction(
+  url: string
+): Promise<{ lat: number | null; lng: number | null }> {
+  await requireAdminUser();
+  return resolveMapsUrlLatLng(url);
 }

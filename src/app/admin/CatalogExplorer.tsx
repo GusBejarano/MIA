@@ -9,11 +9,16 @@ import type {
   AdminCityOption,
   AdminProgramOption,
 } from "@/lib/admin/catalog";
-import { loadBenefitsAction, loadBenefitFullAction } from "./catalogActions";
+import type { BenefitLocation } from "@/lib/mia/discovery";
+import {
+  loadBenefitsAction,
+  loadBenefitFullAction,
+  loadBenefitLocationsAction,
+} from "./catalogActions";
 import AdminBenefitGrid from "./AdminBenefitGrid";
 import EditPanel from "./EditPanel";
 
-function toPreviewMessage(b: AdminBenefitFull): DetailSheetMessage {
+function toPreviewMessage(b: AdminBenefitFull, sedes: BenefitLocation[]): DetailSheetMessage {
   const details: { label: string; value: string }[] = [];
   if (b.valid_until) details.push({ label: "Vigencia", value: `Hasta ${b.valid_until}` });
   if (b.address) details.push({ label: "Dirección", value: b.address });
@@ -33,14 +38,18 @@ function toPreviewMessage(b: AdminBenefitFull): DetailSheetMessage {
     // a DetailSheet, asi que ninguna accion de usuario final llega a persistir.
     relation: { programId: "", programName: "", hasRelation: true },
     redemptionInstructions: b.redemption_instructions,
+    sedes,
+    // Sin userId real detras de este preview - nunca hay un permiso
+    // persistido que consultar, asi que siempre arranca pidiendolo (igual
+    // que la primera vez que lo veria un usuario real).
+    locationPermissionGranted: false,
   };
 }
 
 // Orden de prioridad de revision (mono-sede primero: mayor riesgo de falso
-// positivo, mas barato de verificar - ver v2.0). No es un conteo real
-// todavia (benefit_locations recien se esta poblando), es un estimado por
-// texto (estimateSiteBucket en catalog.ts) - se reemplaza solo cuando haya
-// sedes reales cargadas.
+// positivo, mas barato de verificar - ver v2.0). Real (benefit_location_links)
+// para beneficios ya migrados a comercio compartido (merchant_id); estimado
+// por texto (estimateSiteBucket en catalog.ts) para el resto del catalogo.
 const SITE_BUCKET_ORDER = ["mono-sede", "1-5 sedes", "6-10 sedes", "+10 sedes", "sin clasificar"];
 
 function firstCategory(category: string | null): string {
@@ -62,6 +71,8 @@ export default function CatalogExplorer({
   const [loadingGrid, setLoadingGrid] = useState(false);
   const [selected, setSelected] = useState<AdminBenefitFull | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [previewSedes, setPreviewSedes] = useState<BenefitLocation[]>([]);
+  const [loadingPreview, setLoadingPreview] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [gridError, setGridError] = useState<string | null>(null);
 
@@ -122,6 +133,20 @@ export default function CatalogExplorer({
     setPanelCollapsed(false);
     const full = await loadBenefitFullAction(id);
     setSelected(full);
+  }
+
+  async function handleShowPreview() {
+    if (!selected) return;
+    setLoadingPreview(true);
+    try {
+      const sedes = await loadBenefitLocationsAction(selected.id, city);
+      setPreviewSedes(sedes);
+    } catch {
+      setPreviewSedes([]);
+    } finally {
+      setLoadingPreview(false);
+    }
+    setShowPreview(true);
   }
 
   function handleSaved(updated: AdminBenefitFull) {
@@ -188,7 +213,7 @@ export default function CatalogExplorer({
           disabled={benefits.length === 0}
           className="rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:opacity-50"
         >
-          <option value="">N° de sedes (estimado): todas</option>
+          <option value="">N° de sedes: todas</option>
           {siteBucketOptions.map((b) => (
             <option key={b} value={b}>
               {b}
@@ -237,10 +262,11 @@ export default function CatalogExplorer({
             </button>
             <h2 className="text-sm font-bold text-zinc-900">Detalle de Beneficio</h2>
             <button
-              onClick={() => setShowPreview(true)}
-              className="flex items-center gap-1 rounded-lg border border-zinc-200 px-2 py-1 text-xs font-semibold text-mia-cyan hover:bg-zinc-50"
+              onClick={handleShowPreview}
+              disabled={loadingPreview}
+              className="flex items-center gap-1 rounded-lg border border-zinc-200 px-2 py-1 text-xs font-semibold text-mia-cyan hover:bg-zinc-50 disabled:opacity-50"
             >
-              <span>👁️</span> Usuario Final
+              <span>👁️</span> {loadingPreview ? "Cargando..." : "Usuario Final"}
             </button>
           </div>
           <EditPanel key={selected.id} benefit={selected} city={city} onSaved={handleSaved} />
@@ -248,7 +274,10 @@ export default function CatalogExplorer({
       )}
 
       {selected && showPreview && (
-        <DetailSheet message={toPreviewMessage(selected)} onClose={() => setShowPreview(false)} />
+        <DetailSheet
+          message={toPreviewMessage(selected, previewSedes)}
+          onClose={() => setShowPreview(false)}
+        />
       )}
     </div>
   );

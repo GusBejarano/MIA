@@ -12,6 +12,7 @@ import {
   toggleLocationLinkAction,
   upsertLocationAction,
   deleteLocationAction,
+  resolveMapsUrlLatLngAction,
 } from "./catalogActions";
 
 // Espejo minimo de extractLatLngFromMapsUrl (catalog.ts) - no se puede
@@ -69,6 +70,8 @@ export default function SedesTab({
 
   const [editing, setEditing] = useState<LocationFormState | null>(null);
   const [savingLocation, setSavingLocation] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
 
   const hasLegacyData = Boolean(benefit.address && benefit.how_to_get_there);
 
@@ -202,6 +205,24 @@ export default function SedesTab({
     }
   }
 
+  async function handleExtractCoords() {
+    if (!editing?.mapsUrl.trim()) return;
+    setExtracting(true);
+    setExtractError(null);
+    try {
+      const { lat, lng } = await resolveMapsUrlLatLngAction(editing.mapsUrl.trim());
+      if (lat === null || lng === null) {
+        setExtractError("No se pudieron extraer coordenadas de este link - complétalas a mano.");
+      } else {
+        setEditing({ ...editing, lat, lng });
+      }
+    } catch (err) {
+      setExtractError(err instanceof Error ? err.message : "No se pudo resolver el link.");
+    } finally {
+      setExtracting(false);
+    }
+  }
+
   if (!benefit.merchant_id) {
     return (
       <div className="flex flex-col gap-3 p-4 text-xs">
@@ -311,7 +332,10 @@ export default function SedesTab({
                   </span>
                 </div>
                 <button
-                  onClick={() => setEditing(locationToForm(l))}
+                  onClick={() => {
+                    setExtractError(null);
+                    setEditing(locationToForm(l));
+                  }}
                   className="shrink-0 text-zinc-400 hover:text-zinc-900"
                   title="Editar"
                 >
@@ -332,7 +356,10 @@ export default function SedesTab({
 
       {!editing && (
         <button
-          onClick={() => setEditing(emptyLocationForm(city))}
+          onClick={() => {
+            setExtractError(null);
+            setEditing(emptyLocationForm(city));
+          }}
           className="rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-center font-semibold text-zinc-600 hover:bg-zinc-50"
         >
           + Agregar sede nueva
@@ -370,23 +397,38 @@ export default function SedesTab({
           </label>
           <label className="block">
             <span className="mb-1 block font-semibold text-zinc-500">Link de Google Maps</span>
-            <input
-              type="text"
-              value={editing.mapsUrl}
-              onChange={(e) => {
-                const mapsUrl = e.target.value;
-                const { lat, lng } = extractLatLngFromMapsUrl(mapsUrl);
-                setEditing({
-                  ...editing,
-                  mapsUrl,
-                  lat: lat ?? editing.lat,
-                  lng: lng ?? editing.lng,
-                });
-              }}
-              placeholder="https://www.google.com/maps/place/..."
-              className="w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-sm"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={editing.mapsUrl}
+                onChange={(e) => {
+                  const mapsUrl = e.target.value;
+                  const { lat, lng } = extractLatLngFromMapsUrl(mapsUrl);
+                  setEditing({
+                    ...editing,
+                    mapsUrl,
+                    lat: lat ?? editing.lat,
+                    lng: lng ?? editing.lng,
+                  });
+                }}
+                placeholder="https://www.google.com/maps/place/..."
+                className="w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-sm"
+              />
+              <button
+                type="button"
+                onClick={handleExtractCoords}
+                disabled={extracting || !editing.mapsUrl.trim()}
+                className="shrink-0 rounded-lg border border-zinc-300 px-2 py-1.5 font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+              >
+                {extracting ? "Extrayendo..." : "Extraer"}
+              </button>
+            </div>
+            <span className="mt-1 block text-[10px] text-zinc-400">
+              Si el link es corto (maps.app.goo.gl) no trae coordenadas en el texto - el botón lo
+              resuelve para sacarlas de ahí.
+            </span>
           </label>
+          {extractError && <p className="rounded-lg bg-amber-50 p-2 text-amber-700">{extractError}</p>}
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <span className="mb-1 block font-semibold text-zinc-500">Lat (si no se extrajo)</span>
