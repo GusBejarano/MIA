@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/mia/supabaseClient";
 import { listBenefitsForAdmin, estimateSiteBucket, type AdminBenefitCard } from "./catalog";
-import { getAuditStatusBulk } from "./audit";
+import { getAuditStatusBulk, type AuditStatus } from "./audit";
 
 export type TaskStatus = "activa" | "historico";
 
@@ -21,7 +21,7 @@ export type AdminTaskSummary = {
 };
 
 export type TaskDetail = AdminTaskSummary & {
-  benefits: AdminBenefitCard[];
+  benefits: (AdminBenefitCard & { auditStatus: AuditStatus })[];
 };
 
 function firstCategory(category: string | null): string {
@@ -183,13 +183,14 @@ export async function getTaskDetail(taskId: string): Promise<TaskDetail | null> 
     (id) => auditStatusByBenefit.get(id)?.status === "auditado"
   ).length;
 
-  const benefits: AdminBenefitCard[] = benefitRows.map((r) => ({
+  const benefits: TaskDetail["benefits"] = benefitRows.map((r) => ({
     id: r.id,
     title: r.title,
     category: r.category,
     status: r.status as AdminBenefitCard["status"],
     imageUrl: r.image_url,
     siteBucket: estimateSiteBucket(r.address),
+    auditStatus: auditStatusByBenefit.get(r.id)?.status ?? "sin_auditar",
   }));
 
   return {

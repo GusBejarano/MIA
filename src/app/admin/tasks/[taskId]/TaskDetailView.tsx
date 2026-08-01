@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { TaskDetail } from "@/lib/admin/tasks";
 import type { AdminBenefitFull } from "@/lib/admin/catalog";
@@ -13,6 +13,14 @@ function taskLabel(t: TaskDetail): string {
   return `${t.programName} · ${t.city}${t.category ? ` · ${t.category}` : ""}`;
 }
 
+type AuditFilter = "pendientes" | "auditados" | "todos";
+
+const AUDIT_FILTER_OPTIONS: { value: AuditFilter; label: string }[] = [
+  { value: "pendientes", label: "Pendientes" },
+  { value: "auditados", label: "Auditados" },
+  { value: "todos", label: "Todos" },
+];
+
 export default function TaskDetailView({
   taskId,
   initialDetail,
@@ -23,6 +31,14 @@ export default function TaskDetailView({
   const [detail, setDetail] = useState(initialDetail);
   const [selected, setSelected] = useState<AdminBenefitFull | null>(null);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [auditFilter, setAuditFilter] = useState<AuditFilter>("pendientes");
+
+  const filteredBenefits = useMemo(() => {
+    if (auditFilter === "todos") return detail.benefits;
+    return detail.benefits.filter((b) =>
+      auditFilter === "auditados" ? b.auditStatus === "auditado" : b.auditStatus !== "auditado"
+    );
+  }, [detail.benefits, auditFilter]);
 
   async function refreshDetail() {
     const fresh = await getTaskDetailAction(taskId);
@@ -60,16 +76,38 @@ export default function TaskDetailView({
         {detail.benefits.length === 0 ? (
           <p className="text-sm text-zinc-400">Esta tarea no tiene beneficios pendientes.</p>
         ) : (
-          <AdminBenefitGrid
-            cards={detail.benefits.map((b) => ({
-              id: b.id,
-              title: b.title,
-              tag: b.category?.split(",")[0]?.trim() ?? "(sin categoría)",
-              status: b.status,
-              thumbUrl: b.imageUrl,
-            }))}
-            onSelect={handleSelectCard}
-          />
+          <>
+            <div className="mb-3 flex gap-1">
+              {AUDIT_FILTER_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setAuditFilter(opt.value)}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                    auditFilter === opt.value
+                      ? "bg-zinc-900 text-white"
+                      : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {filteredBenefits.length === 0 ? (
+              <p className="text-sm text-zinc-400">Nada que mostrar con este filtro.</p>
+            ) : (
+              <AdminBenefitGrid
+                cards={filteredBenefits.map((b) => ({
+                  id: b.id,
+                  title: b.title,
+                  tag: b.category?.split(",")[0]?.trim() ?? "(sin categoría)",
+                  status: b.status,
+                  thumbUrl: b.imageUrl,
+                  auditStatus: b.auditStatus,
+                }))}
+                onSelect={handleSelectCard}
+              />
+            )}
+          </>
         )}
       </div>
 

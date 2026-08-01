@@ -47,19 +47,18 @@ export default function AdminBenefitGrid({
               recortar/deformar la imagen misma. */}
           <div className="relative h-28 w-full">
             <BenefitThumbnail imageUrl={card.thumbUrl} title={card.title} className="h-full w-full" />
+            {/* Dot de status (activo/pendiente/inactivo) - a la izquierda
+                para dejar la derecha libre para el sello de auditoria
+                (Admin v2.1, mas visible que un simple dot: el analista
+                necesita diferenciar de un vistazo que ya audito). */}
             <span
-              className={`absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${STATUS_DOT[card.status]}`}
+              className={`absolute left-1.5 top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${STATUS_DOT[card.status]}`}
               title={card.status}
             />
-            {/* Esquina opuesta al dot de status (activo/pendiente/inactivo)
-                para que no se pisen - indicador de auditoria (Admin v2.1). */}
-            {card.auditStatus && (
-              <span
-                className={`absolute left-1.5 top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${
-                  card.auditStatus === "auditado" ? "bg-emerald-500" : "bg-zinc-300"
-                }`}
-                title={card.auditStatus === "auditado" ? "Auditado" : "Sin auditar"}
-              />
+            {card.auditStatus === "auditado" && (
+              <span className="absolute right-1.5 top-1.5 rounded bg-emerald-600 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow-sm">
+                Auditado
+              </span>
             )}
           </div>
           <div className="px-2.5 py-2">
