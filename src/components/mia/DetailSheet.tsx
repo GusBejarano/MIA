@@ -35,6 +35,7 @@ export default function DetailSheet({
   onClose,
   onLocationGranted,
   onRatingChanged,
+  onRelationDeclared,
 }: {
   message: DetailSheetMessage;
   userId?: string;
@@ -43,6 +44,8 @@ export default function DetailSheet({
   onLocationGranted?: () => void;
   /** Se llama despues de guardar una calificacion nueva - el home nuevo (dev 2.5) lo usa para invalidar su cache de "Conectados"/"Preferidos", que de otro modo quedaria desactualizado hasta el proximo cambio de conexiones (bug reportado: calificar un beneficio no lo hacia aparecer en Preferidos). */
   onRatingChanged?: () => void;
+  /** Se llama con el nombre del benefactor despues de declarar una relacion nueva - el home nuevo (dev 2.5) lo usa para que las tarjetas de ese mismo benefactor en "Sugerencias" muestren "Conectado" de una, sin esperar a una busqueda nueva (bug reportado: quedaba desactualizado). */
+  onRelationDeclared?: (programName: string) => void;
 }) {
   const [rating, setRating] = useState(message.rating);
   const [hasRelation, setHasRelation] = useState(message.relation.hasRelation);
@@ -116,6 +119,7 @@ export default function DetailSheet({
       if (!res.ok) throw new Error("No se pudo declarar la relacion");
       setHasRelation(true);
       setShowRelationSelect(false);
+      onRelationDeclared?.(message.relation.programName);
     } catch (err) {
       console.error("No se pudo declarar la relacion:", err);
     } finally {

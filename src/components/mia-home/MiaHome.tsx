@@ -18,6 +18,18 @@ import { suggestionsChatGreeting } from "@/lib/mia/copy";
 
 type Step = "welcome" | "connect" | "cities" | "tabs";
 
+// Lista de indicativos (hoy un solo valor, ya seleccionado por defecto) -
+// separar el indicativo del numero local estandariza como queda el
+// telefono en BD sin pedirselo al usuario como un campo aparte. Sin esto,
+// el mismo numero real podia guardarse distinto segun si la persona
+// escribia el +57 o no ("+573123335744" vs "3123335744"), y como
+// hashPhone (phoneHash.ts) hashea el string tal cual, esos dos hashean
+// distinto - el mismo beneficiario podia terminar con dos filas de
+// usuario separadas en BD. Union de codigo+numero solo pasa aca, antes de
+// mandarlo al backend - la BD sigue guardando el mismo formato de siempre
+// ("+57..."), sin ningun cambio de esquema.
+const COUNTRY_CODES = [{ code: "+57", label: "🇨🇴 Colombia (+57)" }];
+
 // Recuerda phone+userId de este dispositivo (dev 2.5) - a diferencia de
 // REMEMBERED_PHONE_KEY (MiaChat.tsx, solo precarga el input), esto salta
 // directo a los tabs en un regreso: OnB-1/2/3 no vuelven a mostrarse.
@@ -46,7 +58,8 @@ function rememberUser(phone: string, userId: string) {
 export default function MiaHome() {
   const [step, setStep] = useState<Step>("welcome");
   const [nameInput, setNameInput] = useState("");
-  const [phoneInput, setPhoneInput] = useState("");
+  const [countryCode, setCountryCode] = useState(COUNTRY_CODES[0].code);
+  const [localPhoneInput, setLocalPhoneInput] = useState("");
   const [phone, setPhone] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -134,7 +147,11 @@ export default function MiaHome() {
 
   async function handleWelcomeSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const trimmedPhone = phoneInput.trim();
+    // Solo digitos del numero local (por si alguien escribe espacios o
+    // guiones) + el indicativo elegido - un solo formato consistente para
+    // TODOS, sin importar como lo haya escrito la persona.
+    const localDigits = localPhoneInput.replace(/\D/g, "");
+    const trimmedPhone = localDigits ? `${countryCode}${localDigits}` : "";
     const trimmedName = nameInput.trim();
     if (!trimmedPhone || !trimmedName || loading) return;
 
@@ -242,6 +259,21 @@ export default function MiaHome() {
     setChatFilter({ label: queryLabel, cards });
   }
 
+  // Declarar relacion desde el detalle (DetailSheet.tsx) guardaba en BD
+  // bien, pero la tarjeta en "Sugerencias" seguia mostrando "sin
+  // relacion" hasta la proxima busqueda - el badge "connected" de cada
+  // tarjeta es una foto del momento en que se armo el carrusel (ver
+  // handleCardCarouselResult), no se releia solo (bug reportado). Marca
+  // TODAS las tarjetas de ese mismo benefactor ya visibles en Sugerencias,
+  // no solo la que se estaba viendo.
+  function handleRelationDeclared(programName: string) {
+    setChatFilter((prev) =>
+      prev
+        ? { ...prev, cards: prev.cards.map((c) => (c.tag === programName ? { ...c, connected: true } : c)) }
+        : prev
+    );
+  }
+
   // Unico lugar que abre el chat (boton flotante via onOpenChange, o el
   // tab "Sugerencias" vacio) - marca chatHasOpenedOnce en el mismo evento,
   // nunca en un efecto (ver hasOpenedOnce en ChatOverlay.tsx).
@@ -278,18 +310,31 @@ export default function MiaHome() {
               onChange={(e) => setNameInput(e.target.value)}
               className="w-full rounded-full border border-zinc-200 px-5 py-3 text-center text-base text-mia-ink outline-none focus:border-mia-violet"
             />
-            <input
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              placeholder="+57 300 000 0000"
-              value={phoneInput}
-              onChange={(e) => setPhoneInput(e.target.value)}
-              className="w-full rounded-full border border-zinc-200 px-5 py-3 text-center text-base text-mia-ink outline-none focus:border-mia-violet"
-            />
+            <div className="flex w-full gap-2">
+              <select
+                value={countryCode}
+                onChange={(e) => setCountryCode(e.target.value)}
+                className="shrink-0 rounded-full border border-zinc-200 px-3 py-3 text-base text-mia-ink outline-none focus:border-mia-violet"
+              >
+                {COUNTRY_CODES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="300 000 0000"
+                value={localPhoneInput}
+                onChange={(e) => setLocalPhoneInput(e.target.value)}
+                className="w-full min-w-0 rounded-full border border-zinc-200 px-5 py-3 text-center text-base text-mia-ink outline-none focus:border-mia-violet"
+              />
+            </div>
             <button
               type="submit"
-              disabled={loading || !phoneInput.trim() || !nameInput.trim()}
+              disabled={loading || !localPhoneInput.trim() || !nameInput.trim()}
               className="w-full rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-5 py-3 text-base font-semibold text-white transition-opacity disabled:opacity-50"
             >
               {loading ? "Conectando..." : "Empezar a chatear"}
@@ -366,9 +411,23 @@ export default function MiaHome() {
         </button>
 
         <div className="flex-1" />
-        <div className="shrink-0">
-          <AvatarCircle avatar={avatar} size="sm" onClick={() => setProfileOpen(true)} />
-        </div>
+        {/* Nombre truncado con CSS (ellipsis), no un slice(0,N) fijo en JS -
+            el ancho real de cada letra varia, un tope de caracteres fijo se
+            veria bien para algunos nombres y cortado de mas/de menos para
+            otros. Ancho igual al avatar (w-10) para que quede centrado
+            debajo sin ensanchar esta columna. */}
+        <button
+          type="button"
+          onClick={() => setProfileOpen(true)}
+          className="flex shrink-0 flex-col items-center gap-0.5"
+        >
+          <AvatarCircle avatar={avatar} size="sm" />
+          {userName && (
+            <span className="w-10 truncate text-center text-[9px] leading-none text-zinc-400">
+              {userName}
+            </span>
+          )}
+        </button>
       </header>
 
       <HomeTabs
@@ -397,6 +456,7 @@ export default function MiaHome() {
             )
           }
           onRatingChanged={() => setConnectionsVersion((v) => v + 1)}
+          onRelationDeclared={handleRelationDeclared}
         />
       )}
 
