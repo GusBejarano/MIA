@@ -12,19 +12,53 @@ type ProfileDetails = {
   avatar: AvatarKey;
 };
 
-// Los 3 avatares del prompt son "avatar-negro.png" / "avatar-verde.png" /
-// "avatar-fucsia.png" (assets fijos de diseno, no se generan aqui - ver
-// prompt regla 8). Los 3 PNG que llegaron en el chat se ven violeta/oscuro/
-// cian (los tokens de marca reales de globals.css), no negro/verde/fucsia -
-// mientras no tengamos los archivos definitivos en public/avatars/, estos
-// son placeholders de color plano con los 3 colores que SI se pudieron ver,
-// para no inventar un verde/fucsia que no vino en ningun asset real. Los
-// valores que se guardan en BD (negro/verde/fucsia) no cambian.
-const AVATAR_OPTIONS: { key: AvatarKey; colorClass: string }[] = [
-  { key: "negro", colorClass: "bg-mia-ink" },
-  { key: "verde", colorClass: "bg-mia-violet" },
-  { key: "fucsia", colorClass: "bg-mia-cyan" },
-];
+// Los 3 avatares van en public/avatars/avatar-{negro|verde|fucsia}.png (los
+// 3 valores que ya guarda la BD, ver supabase/2026.08.07-...sql). Mientras
+// ese archivo no exista todavia para una clave puntual, AvatarCircle cae a
+// un circulo de color solido en vez de un icono roto - mismo patron de
+// fallback que BenefitThumbnail.tsx.
+const AVATAR_FALLBACK_COLOR: Record<AvatarKey, string> = {
+  negro: "bg-mia-ink",
+  verde: "bg-mia-violet",
+  fucsia: "bg-mia-cyan",
+};
+const AVATAR_KEYS = Object.keys(AVATAR_FALLBACK_COLOR) as AvatarKey[];
+
+function AvatarCircle({
+  avatar,
+  size,
+  selected,
+  onClick,
+}: {
+  avatar: AvatarKey;
+  size: "sm" | "lg";
+  selected?: boolean;
+  onClick?: () => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const dimension = size === "lg" ? "h-16 w-16" : "h-10 w-10";
+  const ring = selected ? "ring-2 ring-offset-2 ring-mia-violet" : "";
+
+  const content = failed ? (
+    <div className={`${dimension} rounded-full ${AVATAR_FALLBACK_COLOR[avatar]}`} />
+  ) : (
+    // eslint-disable-next-line @next/next/no-img-element -- fallback a color si el PNG todavia no existe en public/avatars/
+    <img
+      src={`/avatars/avatar-${avatar}.png`}
+      alt={`Avatar ${avatar}`}
+      onError={() => setFailed(true)}
+      className={`${dimension} rounded-full object-cover`}
+    />
+  );
+
+  if (!onClick) return <div className={ring}>{content}</div>;
+
+  return (
+    <button type="button" onClick={onClick} aria-label={`Avatar ${avatar}`} className={`rounded-full ${ring}`}>
+      {content}
+    </button>
+  );
+}
 
 const GENDER_OPTIONS = [
   { value: "femenino", label: "Femenino" },
@@ -51,15 +85,36 @@ export default function ProfileSheet({ userId, onClose }: { userId: string; onCl
 
   async function saveField(fieldKey: "name" | "gender" | "birth_date", value: string) {
     if (!value.trim()) return;
+    await fetch("/api/mia/onboarding/profile-field", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, fieldKey, value }),
+    });
+  }
+
+  async function handleGenderTap(value: string) {
     setBusy(true);
     try {
-      await fetch("/api/mia/onboarding/profile-field", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, fieldKey, value }),
-      });
+      await saveField("gender", value);
+      setProfile((p) => (p ? { ...p, gender: value } : p));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const hasChanges = profile
+    ? nameInput.trim() !== (profile.name ?? "") || birthDateInput !== (profile.birthDate ?? "")
+    : false;
+
+  async function handleSaveChanges() {
+    if (!profile || !hasChanges) return;
+    setBusy(true);
+    try {
+      if (nameInput.trim() !== (profile.name ?? "")) await saveField("name", nameInput);
+      if (birthDateInput !== (profile.birthDate ?? "")) await saveField("birth_date", birthDateInput);
+      setProfile((p) => (p ? { ...p, name: nameInput.trim(), birthDate: birthDateInput } : p));
       setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
+      setTimeout(() => setSaved(false), 2000);
     } finally {
       setBusy(false);
     }
@@ -86,11 +141,7 @@ export default function ProfileSheet({ userId, onClose }: { userId: string; onCl
 
         <div className="flex-1 overflow-y-auto px-4 py-4">
           <div className="flex flex-col items-center gap-1 pb-2 text-center">
-            <div
-              className={`h-16 w-16 rounded-full ${
-                AVATAR_OPTIONS.find((a) => a.key === profile.avatar)?.colorClass ?? "bg-mia-ink"
-              }`}
-            />
+            <AvatarCircle avatar={profile.avatar} size="lg" />
             <div className="flex items-center gap-1">
               <span className="text-sm font-medium text-mia-violet">Explorador</span>
               <span className="flex gap-0.5 text-sm">
@@ -103,15 +154,13 @@ export default function ProfileSheet({ userId, onClose }: { userId: string; onCl
           </div>
 
           <div className="mb-5 flex justify-center gap-3">
-            {AVATAR_OPTIONS.map((a) => (
-              <button
-                key={a.key}
-                type="button"
-                onClick={() => pickAvatar(a.key)}
-                aria-label={`Avatar ${a.key}`}
-                className={`h-10 w-10 rounded-full ${a.colorClass} ${
-                  profile.avatar === a.key ? "ring-2 ring-offset-2 ring-mia-violet" : ""
-                }`}
+            {AVATAR_KEYS.map((key) => (
+              <AvatarCircle
+                key={key}
+                avatar={key}
+                size="sm"
+                selected={profile.avatar === key}
+                onClick={() => pickAvatar(key)}
               />
             ))}
           </div>
@@ -122,7 +171,6 @@ export default function ProfileSheet({ userId, onClose }: { userId: string; onCl
               <input
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                onBlur={() => saveField("name", nameInput)}
                 className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm text-mia-ink"
               />
             </div>
@@ -144,7 +192,7 @@ export default function ProfileSheet({ userId, onClose }: { userId: string; onCl
                     key={g.value}
                     type="button"
                     disabled={busy}
-                    onClick={() => saveField("gender", g.value)}
+                    onClick={() => handleGenderTap(g.value)}
                     className={
                       profile.gender === g.value
                         ? "rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-3 py-1.5 text-xs font-semibold text-white"
@@ -163,12 +211,19 @@ export default function ProfileSheet({ userId, onClose }: { userId: string; onCl
                 type="date"
                 value={birthDateInput}
                 onChange={(e) => setBirthDateInput(e.target.value)}
-                onBlur={() => saveField("birth_date", birthDateInput)}
                 className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm text-mia-ink"
               />
             </div>
           </div>
 
+          <button
+            type="button"
+            onClick={handleSaveChanges}
+            disabled={!hasChanges || busy}
+            className="mt-5 w-full rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {busy ? "Guardando..." : "Guardar cambios"}
+          </button>
           {saved && <p className="mt-3 text-center text-xs text-mia-violet">Guardado</p>}
         </div>
       </div>

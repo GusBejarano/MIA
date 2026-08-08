@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { saveUserConnection, type RelationType } from "@/lib/mia/store";
+import { saveUserConnection, removeUserConnection, type RelationType } from "@/lib/mia/store";
 
 // Conecta un benefactor con tipo de relacion (OnB-2 y "Mis conexiones") -
 // fuera del flujo de turnos de chat, mismo patron que /api/mia/declare-relation.
@@ -39,5 +39,29 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("Error en /api/mia/onboarding/connect:", err);
     return NextResponse.json({ error: "No se pudo guardar la conexion" }, { status: 500 });
+  }
+}
+
+type DeleteBody = { userId: string; programId: string };
+
+export async function DELETE(req: NextRequest) {
+  let body: DeleteBody;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "JSON invalido" }, { status: 400 });
+  }
+
+  const { userId, programId } = body;
+  if (!userId || !UUID_RE.test(userId) || !programId || !UUID_RE.test(programId)) {
+    return NextResponse.json({ error: "Datos invalidos" }, { status: 400 });
+  }
+
+  try {
+    await removeUserConnection(userId, programId);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("Error en DELETE /api/mia/onboarding/connect:", err);
+    return NextResponse.json({ error: "No se pudo quitar la conexion" }, { status: 500 });
   }
 }

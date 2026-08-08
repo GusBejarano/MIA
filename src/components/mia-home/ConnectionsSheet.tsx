@@ -22,9 +22,10 @@ const RELATION_LABELS: Record<RelationType, string> = {
 const RELATION_TYPES = Object.keys(RELATION_LABELS) as RelationType[];
 
 /**
- * "Mis conexiones" - agregar mas benefactores/ciudades y elegir cual
- * conexion es la principal (rule 5 del prompt: se controla desde la app,
- * atomico via RPC set_principal_connection - ver store.ts).
+ * "Mis conexiones" - conectar/desconectar benefactores (con tipo de
+ * relacion y cual es la principal, rule 5 del prompt: atomico via RPC
+ * set_principal_connection - ver store.ts) y agregar/quitar ciudades de
+ * interes.
  */
 export default function ConnectionsSheet({
   userId,
@@ -37,6 +38,7 @@ export default function ConnectionsSheet({
   const [cities, setCities] = useState<string[] | null>(null);
   const [allPrograms, setAllPrograms] = useState<ProgramOption[] | null>(null);
   const [allCities, setAllCities] = useState<CityOption[] | null>(null);
+  const [showAddPrograms, setShowAddPrograms] = useState(false);
   const [addingProgramId, setAddingProgramId] = useState<string | null>(null);
   const [addingCity, setAddingCity] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -75,6 +77,21 @@ export default function ConnectionsSheet({
         }),
       });
       setAddingProgramId(null);
+      setShowAddPrograms(false);
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnectProgram(programId: string) {
+    setBusy(true);
+    try {
+      await fetch("/api/mia/onboarding/connect", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, programId }),
+      });
       reload();
     } finally {
       setBusy(false);
@@ -110,6 +127,20 @@ export default function ConnectionsSheet({
     }
   }
 
+  async function removeCity(city: string) {
+    setBusy(true);
+    try {
+      await fetch("/api/mia/onboarding/cities", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, city }),
+      });
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const unconnectedPrograms = (allPrograms ?? []).filter(
     (p) => !(connections ?? []).some((c) => c.programId === p.id)
   );
@@ -129,55 +160,88 @@ export default function ConnectionsSheet({
           </p>
           <div className="flex flex-col gap-2">
             {(connections ?? []).map((c) => (
-              <div key={c.programId} className="flex items-center gap-3 rounded-2xl border border-zinc-200 p-3">
-                <button
-                  type="button"
-                  disabled={busy || c.esPrincipal || !c.tipoRelacion}
-                  onClick={() => c.tipoRelacion && makePrincipal(c.programId, c.tipoRelacion)}
-                  aria-label={c.esPrincipal ? "Conexión principal" : "Marcar como principal"}
-                  className={c.esPrincipal ? "text-mia-violet" : "text-zinc-300"}
-                >
-                  ★
-                </button>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-mia-ink">{c.programName}</p>
-                  <p className="text-xs text-zinc-400">
-                    {c.tipoRelacion ? RELATION_LABELS[c.tipoRelacion] : ""}
-                    {c.esPrincipal ? " · principal" : ""}
-                  </p>
+              <div key={c.programId} className="rounded-2xl border border-zinc-200 p-3">
+                <div className="flex items-center gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-mia-ink">{c.programName}</p>
+                    <p className="text-xs text-zinc-400">
+                      {c.tipoRelacion ? RELATION_LABELS[c.tipoRelacion] : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => disconnectProgram(c.programId)}
+                    className="shrink-0 text-xs font-semibold text-red-500 disabled:opacity-50"
+                  >
+                    Desconectar
+                  </button>
                 </div>
+                {c.esPrincipal ? (
+                  <p className="mt-2 flex items-center gap-1 text-xs font-semibold text-mia-violet">
+                    <span aria-hidden>★</span> Conexión principal
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy || !c.tipoRelacion}
+                    onClick={() => c.tipoRelacion && makePrincipal(c.programId, c.tipoRelacion)}
+                    className="mt-2 flex items-center gap-1 text-xs font-semibold text-zinc-400 disabled:opacity-50"
+                  >
+                    <span aria-hidden>☆</span> Hacer principal
+                  </button>
+                )}
               </div>
             ))}
 
-            {addingProgramId ? (
-              <div className="rounded-2xl border border-dashed border-zinc-300 p-3">
-                <p className="mb-2 text-xs text-zinc-500">
-                  {allPrograms?.find((p) => p.id === addingProgramId)?.name}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {RELATION_TYPES.map((rt) => (
-                    <button
-                      key={rt}
-                      type="button"
-                      disabled={busy}
-                      onClick={() => connectProgram(addingProgramId, rt)}
-                      className="rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-mia-ink disabled:opacity-50"
-                    >
-                      {RELATION_LABELS[rt]}
-                    </button>
-                  ))}
-                </div>
+            {connections?.length === 0 && !showAddPrograms && (
+              <p className="text-xs text-zinc-400">Todavía no conectaste ningún benefactor.</p>
+            )}
+
+            {showAddPrograms && (
+              <div className="flex flex-col gap-2">
+                {unconnectedPrograms.map((p) => (
+                  <div key={p.id} className="rounded-2xl border border-dashed border-zinc-300 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm text-mia-ink">{p.name}</p>
+                      {addingProgramId !== p.id && (
+                        <button
+                          type="button"
+                          onClick={() => setAddingProgramId(p.id)}
+                          className="shrink-0 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-mia-ink"
+                        >
+                          Conectar
+                        </button>
+                      )}
+                    </div>
+                    {addingProgramId === p.id && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {RELATION_TYPES.map((rt) => (
+                          <button
+                            key={rt}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => connectProgram(p.id, rt)}
+                            className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-mia-ink disabled:opacity-50"
+                          >
+                            {RELATION_LABELS[rt]}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
-            ) : (
-              unconnectedPrograms.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setAddingProgramId(unconnectedPrograms[0].id)}
-                  className="rounded-2xl border border-dashed border-zinc-300 p-3 text-center text-xs font-semibold text-mia-violet"
-                >
-                  + conectar otro benefactor
-                </button>
-              )
+            )}
+
+            {!showAddPrograms && unconnectedPrograms.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowAddPrograms(true)}
+                className="rounded-2xl border border-dashed border-zinc-300 p-3 text-center text-xs font-semibold text-mia-violet"
+              >
+                + conectar otro benefactor
+              </button>
             )}
           </div>
 
@@ -186,8 +250,20 @@ export default function ConnectionsSheet({
           </p>
           <div className="flex flex-wrap gap-2">
             {(cities ?? []).map((city) => (
-              <span key={city} className="rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-3 py-1.5 text-xs font-semibold text-white">
+              <span
+                key={city}
+                className="flex items-center gap-1.5 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan py-1.5 pl-3 pr-2 text-xs font-semibold text-white"
+              >
                 {city}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => removeCity(city)}
+                  aria-label={`Quitar ${city}`}
+                  className="flex h-4 w-4 items-center justify-center rounded-full bg-white/20 text-[10px] disabled:opacity-50"
+                >
+                  ×
+                </button>
               </span>
             ))}
             {addingCity ? (

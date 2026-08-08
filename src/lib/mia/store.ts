@@ -665,6 +665,18 @@ export async function saveUserConnection(
   }
 }
 
+/** Quita la conexion con un benefactor (boton "Desconectar" en "Mis conexiones"). */
+export async function removeUserConnection(userId: string, programId: string) {
+  const { error } = await supabase
+    .from("user_programs")
+    .delete()
+    .eq("user_id", userId)
+    .eq("program_id", programId);
+  if (error) {
+    throw new Error(`No se pudo quitar la conexion: ${error.message}`);
+  }
+}
+
 /** Conexiones (benefactores) del usuario, con tipo de relacion y cual es la principal. */
 export async function getUserConnections(userId: string): Promise<UserConnection[]> {
   const { data, error } = await supabase
@@ -710,4 +722,16 @@ export async function getUserCities(userId: string): Promise<string[]> {
     throw new Error(`No se pudieron leer las ciudades del usuario: ${error.message}`);
   }
   return (data ?? []).map((row) => row.city as string);
+}
+
+/** Quita una ciudad de interes (boton "×" en "Mis conexiones"). */
+export async function removeUserCity(userId: string, city: string) {
+  const { error } = await supabase
+    .from("user_cities")
+    .delete()
+    .eq("user_id", userId)
+    .eq("city", city);
+  if (error) {
+    throw new Error(`No se pudo quitar la ciudad: ${error.message}`);
+  }
 }
