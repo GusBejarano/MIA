@@ -136,7 +136,7 @@ export default function NearbyList({
               <BenefitThumbnail imageUrl={card.thumbUrl} title={card.title} className="h-full w-full" />
               {card.discountPercent != null && (
                 <span className="absolute left-1.5 top-1.5 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-2 py-0.5 text-[9px] font-bold text-white shadow-sm">
-                  Desde {card.discountPercent}%
+                  Hasta {card.discountPercent}%
                 </span>
               )}
             </div>

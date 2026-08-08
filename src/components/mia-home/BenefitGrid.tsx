@@ -16,7 +16,7 @@ export type GridCard = {
   rating?: number;
   /** Ciudad (de tus ciudades de interes) donde aplica este beneficio puntual - Conectados/Cerca de ti mezclan tarjetas de varias ciudades a la vez. */
   cityLabel?: string;
-  /** "Desde X%" extraido de las condiciones en texto libre - null/undefined si no se detecto ningun porcentaje (no se inventa, simplemente no se muestra el badge). */
+  /** "Hasta X%" extraido de las condiciones en texto libre - null/undefined si no se detecto ningun porcentaje (no se inventa, simplemente no se muestra el badge). */
   discountPercent?: number | null;
 };
 
@@ -62,7 +62,7 @@ export default function BenefitGrid({
             <BenefitThumbnail imageUrl={card.thumbUrl} title={card.title} className="h-full w-full" />
             {card.discountPercent != null && (
               <span className="absolute left-1.5 top-1.5 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-2 py-0.5 text-[9px] font-bold text-white shadow-sm">
-                Desde {card.discountPercent}%
+                Hasta {card.discountPercent}%
               </span>
             )}
             {card.connected && (

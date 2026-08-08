@@ -22,16 +22,35 @@ function capitalizeCity(normalized: string): string {
 }
 
 /**
- * % de descuento "desde" (el mas bajo de los que aparezcan) extraido del
- * texto libre de `conditions` - NO hay ningun campo estructurado de
- * descuento en el esquema (confirmado: benefits no tiene discount_percent
- * ni nada parecido, ni siquiera en raw_data). Heuristica de mejor
- * esfuerzo: busca todos los "N%" del texto y devuelve el minimo (criterio
- * "desde" - nunca promete de mas). Si el beneficio no tiene ningun
- * porcentaje en el texto (ej. "2x1", "domicilio gratis"), devuelve null y
- * la tarjeta simplemente no muestra el badge - nunca se inventa un numero.
+ * Etiqueta de ciudad para una tarjeta - si el beneficio aplica en mas de
+ * una de las ciudades de interes del usuario (comun: muchos beneficios
+ * declaran varias ciudades a la vez), antes se mostraba solo la primera
+ * que calzaba (ej. "Cali") sin ninguna señal de que TAMBIEN aplicaba en
+ * Jamundi - dando la impresion equivocada de que no habia cobertura ahi
+ * (bug reportado). Mismo patron "+N" que ya usan los pills del header
+ * (ciudad/benefactor) para el mismo caso.
  */
-export function extractMinDiscountPercent(conditions: string | null): number | null {
+function buildCityLabel(cityList: string[], userCityValues: Set<string>): string {
+  const matches = cityList.filter((c) => userCityValues.has(c));
+  if (matches.length === 0) {
+    return cityList[0] ? capitalizeCity(cityList[0]) : "Nacional";
+  }
+  const extra = matches.length - 1;
+  return extra > 0 ? `${capitalizeCity(matches[0])} +${extra}` : capitalizeCity(matches[0]);
+}
+
+/**
+ * % de descuento "hasta" (el mas alto de los que aparezcan, ej. "10% dto,
+ * 15% con tarjeta" -> 15) extraido del texto libre de `conditions` - NO
+ * hay ningun campo estructurado de descuento en el esquema (confirmado:
+ * benefits no tiene discount_percent ni nada parecido, ni siquiera en
+ * raw_data). Heuristica de mejor esfuerzo: busca todos los "N%" del texto
+ * y devuelve el maximo (criterio "hasta", el uso habitual en marketing -
+ * "hasta 50% de descuento"). Si el beneficio no tiene ningun porcentaje en
+ * el texto (ej. "2x1", "domicilio gratis"), devuelve null y la tarjeta
+ * simplemente no muestra el badge - nunca se inventa un numero.
+ */
+export function extractMaxDiscountPercent(conditions: string | null): number | null {
   if (!conditions) return null;
   const matches = conditions.match(/\d{1,3}\s*%/g);
   if (!matches) return null;
@@ -39,7 +58,7 @@ export function extractMinDiscountPercent(conditions: string | null): number | n
     .map((m) => parseInt(m, 10))
     .filter((n) => Number.isFinite(n) && n > 0 && n <= 100);
   if (values.length === 0) return null;
-  return Math.min(...values);
+  return Math.max(...values);
 }
 
 // Color de benefactor/programa deterministico por id - no podemos
@@ -401,7 +420,7 @@ export type ConnectedBenefitCard = BenefitCard & {
   rating: number;
   /** Ciudad (de las ciudades de interes del usuario) donde este beneficio aplica - un beneficio puede tener varias, se muestra la primera que coincida. Nunca la ciudad "activa" de la app entera: Conectados mezcla tarjetas de todas las ciudades de interes a la vez. */
   cityLabel: string;
-  /** "Desde X%" extraido de las condiciones en texto libre - ver extractMinDiscountPercent. null si el beneficio no trae ningun porcentaje detectable (no es un error, simplemente no se muestra el badge). */
+  /** "Hasta X%" extraido de las condiciones en texto libre - ver extractMaxDiscountPercent. null si el beneficio no trae ningun porcentaje detectable (no es un error, simplemente no se muestra el badge). */
   discountPercent: number | null;
 };
 
@@ -474,8 +493,6 @@ export async function getConnectedBenefits(
 
   const cards: ConnectedBenefitCard[] = (data ?? []).map((row) => {
     const cityList = (row.city_list as string[] | null) ?? [];
-    const matchedCity = cityList.find((c) => userCityValues.has(c)) ?? cityList[0];
-    const cityLabel = matchedCity ? capitalizeCity(matchedCity) : "Nacional";
     return {
       id: row.id as string,
       title: row.title as string,
@@ -484,8 +501,8 @@ export async function getConnectedBenefits(
       thumbUrl: (row.image_url as string) ?? null,
       categoryValues: (row.category_list as string[] | null) ?? [],
       rating: ownRatingByBenefitId[row.id as string] ?? 0,
-      cityLabel,
-      discountPercent: extractMinDiscountPercent(row.conditions as string | null),
+      cityLabel: buildCityLabel(cityList, userCityValues),
+      discountPercent: extractMaxDiscountPercent(row.conditions as string | null),
     };
   });
   const priorityByBenefitId = new Map(
@@ -590,8 +607,6 @@ export async function getNearbyConnectedBenefits(
   return benefitRows.map((row) => {
     const coords = coordsByBenefit.get(row.id as string)!;
     const cityList = (row.city_list as string[] | null) ?? [];
-    const matchedCity = cityList.find((c) => userCityValues.has(c)) ?? cityList[0];
-    const cityLabel = matchedCity ? capitalizeCity(matchedCity) : "Nacional";
     return {
       id: row.id as string,
       title: row.title as string,
@@ -602,8 +617,8 @@ export async function getNearbyConnectedBenefits(
       lng: coords.lng,
       categoryValues: (row.category_list as string[] | null) ?? [],
       rating: ownRatingByBenefitId[row.id as string] ?? 0,
-      cityLabel,
-      discountPercent: extractMinDiscountPercent(row.conditions as string | null),
+      cityLabel: buildCityLabel(cityList, userCityValues),
+      discountPercent: extractMaxDiscountPercent(row.conditions as string | null),
     };
   });
 }
