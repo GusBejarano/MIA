@@ -1,6 +1,7 @@
 import { supabase } from "./supabaseClient";
 import { colorForString } from "./colorPalette";
 import { getRatingsForBenefits } from "./store";
+import { findRelevantSuggestionIds } from "./tasks/rankSuggestions";
 
 /**
  * Capitaliza un valor de ciudad ya normalizado (minusculas, sin tildes -
@@ -256,6 +257,107 @@ export async function getBenefitsForCategory(
     tag: categoryLabel,
     sourceProgram: nameById.get(row.source_program_id as string) ?? "",
     thumbUrl: (row.image_url as string) ?? null,
+  }));
+}
+
+export type SuggestionMatch = {
+  id: string;
+  title: string;
+  sourceProgramId: string;
+  thumbUrl: string | null;
+  rating: number;
+};
+
+const SUGGESTIONS_CONNECTED_LIMIT = 7;
+const SUGGESTIONS_EXTERNAL_LIMIT = 5;
+
+/**
+ * Busqueda semantica libre para el tab "Sugerencias" (dev 2.5) - responde
+ * preguntas abiertas tipo "quiero invitar a mi esposa a cenar hoy" (no
+ * nombres de negocio puntuales, eso sigue siendo findBusinessMatches).
+ * Busca en TODO el catalogo activo de la ciudad, sin limitarse a los
+ * benefactores conectados del usuario (mismo criterio que
+ * findBusinessMatches: un beneficio "sin relacion aun" tambien puede
+ * motivar a declararla, ver DetailSheet.tsx) - hasta
+ * SUGGESTIONS_CONNECTED_LIMIT resultados de benefactores donde el usuario
+ * ya tiene relacion + hasta SUGGESTIONS_EXTERNAL_LIMIT de afuera.
+ *
+ * El filtro de relevancia (que beneficios responden a la necesidad) lo
+ * hace Haiku (findRelevantSuggestionIds); el orden final dentro de cada
+ * grupo - estrellas propias desc, luego % de descuento desc, mismo
+ * criterio que "Preferidos" en el resto de la app - lo decide esta
+ * funcion, aislada para poder cambiarlo despues sin tocar el motor de
+ * conversacion (mismo principio que getUserMaturityLevel).
+ */
+export async function getSuggestions(
+  need: string,
+  city: string,
+  userId: string,
+  connectedProgramIds: string[]
+): Promise<SuggestionMatch[]> {
+  const { data: scopeKeys, error: scopeError } = await supabase.rpc("resolve_city_scope", {
+    target_city: city,
+  });
+  if (scopeError) {
+    throw new Error(`No se pudo resolver el alcance de la ciudad: ${scopeError.message}`);
+  }
+
+  const { data, error } = await supabase
+    .from("benefits")
+    .select("id, title, source_program_id, image_url, category_list, conditions")
+    .eq("status", "activo")
+    .overlaps("city_list", (scopeKeys ?? []) as string[]);
+  if (error) {
+    throw new Error(`No se pudieron consultar los beneficios activos: ${error.message}`);
+  }
+  const rows = data ?? [];
+  if (rows.length === 0) return [];
+
+  const relevantIds = await findRelevantSuggestionIds(
+    need,
+    rows.map((r) => ({
+      id: r.id as string,
+      title: r.title as string,
+      category: ((r.category_list as string[] | null) ?? []).join(", "),
+      conditions: (r.conditions as string) ?? "",
+    }))
+  );
+  if (relevantIds.length === 0) return [];
+
+  const byId = new Map(rows.map((r) => [r.id as string, r]));
+  const connectedSet = new Set(connectedProgramIds);
+  const ratings = await getRatingsForBenefits(userId, relevantIds);
+
+  const scored = relevantIds.map((id) => {
+    const row = byId.get(id)!;
+    return {
+      id,
+      title: row.title as string,
+      sourceProgramId: row.source_program_id as string,
+      thumbUrl: (row.image_url as string) ?? null,
+      rating: ratings[id] ?? 0,
+      discountPercent: extractMaxDiscountPercent((row.conditions as string) ?? null) ?? -1,
+    };
+  });
+
+  const byRatingThenDiscount = (a: (typeof scored)[number], b: (typeof scored)[number]) =>
+    b.rating - a.rating || b.discountPercent - a.discountPercent;
+
+  const connected = scored
+    .filter((s) => connectedSet.has(s.sourceProgramId))
+    .sort(byRatingThenDiscount)
+    .slice(0, SUGGESTIONS_CONNECTED_LIMIT);
+  const external = scored
+    .filter((s) => !connectedSet.has(s.sourceProgramId))
+    .sort(byRatingThenDiscount)
+    .slice(0, SUGGESTIONS_EXTERNAL_LIMIT);
+
+  return [...connected, ...external].map((s) => ({
+    id: s.id,
+    title: s.title,
+    sourceProgramId: s.sourceProgramId,
+    thumbUrl: s.thumbUrl,
+    rating: s.rating,
   }));
 }
 

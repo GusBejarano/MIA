@@ -146,13 +146,16 @@ export default function ChatPanel({
   phone,
   initialState,
   initialReply,
+  greetingOverride,
   onCardCarouselResult,
   onRatingChanged,
 }: {
   phone: string;
   initialState: ClientState;
   initialReply: { reply: string; ui: UiMessage[]; navLinks?: NavLink[] };
-  /** Home nuevo (dev 2.5): cuando una respuesta de MIA trae un card_carousel, se refleja como filtro (removible, solo de esta sesion) en el tab Explorar - ver HomeTabs.tsx. */
+  /** Home nuevo (dev 2.5): reemplaza SOLO el texto del primer mensaje (el saludo especial del tab "Sugerencias" vacío, ver copy.ts) - la sesion real detras (initialState/history) sigue siendo la misma, esto es puramente de despliegue visual. */
+  greetingOverride?: string;
+  /** Home nuevo (dev 2.5): cuando una respuesta de MIA trae un card_carousel, se refleja como filtro (removible, solo de esta sesion) en el tab Sugerencias - ver HomeTabs.tsx. */
   onCardCarouselResult?: (carousel: CardCarouselMessage, queryLabel: string) => void;
   /** Home nuevo (dev 2.5): se lo pasa tal cual a DetailSheet - ver su prop del mismo nombre. */
   onRatingChanged?: () => void;
@@ -162,7 +165,7 @@ export default function ChatPanel({
     {
       id: nextMessageId++,
       role: "assistant",
-      text: initialReply.reply,
+      text: greetingOverride ?? initialReply.reply,
       ui: initialReply.ui,
       navLinks: initialReply.navLinks,
     },

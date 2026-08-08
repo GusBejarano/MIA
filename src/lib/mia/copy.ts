@@ -30,3 +30,23 @@ export const NEARBY_EMPTY_STATE_MESSAGE =
 
 export const NEARBY_RADIUS_EMPTY_MESSAGE =
   "No hay beneficios dentro de este radio - prueba ampliándolo.";
+
+// Home nuevo (dev 2.5) - tab "Sugerencias" (antes "Explorar"): superficie
+// 100% dependiente de la conversacion con MIA, sin fila de categorias ni
+// contenido por defecto.
+export const SUGGESTIONS_EMPTY_MESSAGE =
+  "Todavía no tienes sugerencias.\nToca este tab para preguntarle a MIA.";
+
+/**
+ * Saludo especial SOLO para cuando se abre el chat desde el tab
+ * "Sugerencias" vacío (reemplaza el saludo real de esa apertura, sin
+ * tocar el saludo real que arma OnboardingSession.start() para cualquier
+ * otro punto de entrada - ver ChatOverlay.tsx/MiaHome.tsx). Sin numero de
+ * tope fijo en el texto (hoy son hasta 12, ver getSuggestions en
+ * discovery.ts) para no tener que sincronizar dos lugares si ese numero
+ * cambia despues.
+ */
+export function suggestionsChatGreeting(name: string | null): string {
+  const saludo = name ? `¡Bienvenido, ${name}!` : "¡Bienvenido!";
+  return `${saludo} Cuéntame qué buscas y te lo encuentro. Por ejemplo, puedes escribir algo como "quiero invitar a mi esposa a cenar hoy" y te muestro las mejores alternativas.`;
+}

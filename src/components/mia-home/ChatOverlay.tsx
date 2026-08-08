@@ -20,7 +20,7 @@ export type ChatBootstrap = {
  * Reutiliza ChatPanel.tsx tal cual, el mismo componente que renderiza el
  * chat de pantalla completa en produccion.
  *
- * Tocar una tarjeta en un grid (Conectados/Cerca de ti/Explorar) YA NO
+ * Tocar una tarjeta en un grid (Conectados/Cerca de ti/Sugerencias) YA NO
  * abre este overlay - ver MiaHome.viewDetail(), que llama al mismo motor
  * de chat pero muestra el DetailSheet solo, sin la conversacion alrededor
  * (feedback explicito: el detalle debe verse directo). Este overlay queda
@@ -31,6 +31,7 @@ export default function ChatOverlay({
   bootstrap,
   isOpen,
   onOpenChange,
+  greetingOverride,
   onCardCarouselResult,
   onRatingChanged,
 }: {
@@ -38,6 +39,8 @@ export default function ChatOverlay({
   bootstrap: ChatBootstrap | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Saludo especial del tab "Sugerencias" vacío - ver ChatPanel.tsx. */
+  greetingOverride?: string;
   onCardCarouselResult?: (carousel: CardCarouselMessage, queryLabel: string) => void;
   /** Calificar un beneficio desde el detalle abierto DENTRO del chat tambien debe invalidar el cache de Conectados/Preferidos - ver DetailSheet.tsx. */
   onRatingChanged?: () => void;
@@ -55,8 +58,17 @@ export default function ChatOverlay({
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/35">
-          <div className="flex h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white">
+        <div
+          className="fixed inset-0 z-40 flex items-end justify-center bg-black/35 animate-[fade-in_0.15s_ease-out]"
+          onClick={() => onOpenChange(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex h-[60vh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl animate-[slide-up_0.2s_ease-out] sm:h-[85vh] sm:max-w-lg"
+          >
+            <div className="flex shrink-0 justify-center pt-2">
+              <span className="h-1 w-10 rounded-full bg-zinc-200" aria-hidden />
+            </div>
             <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3">
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan text-xs font-bold text-white">
                 M
@@ -70,6 +82,7 @@ export default function ChatOverlay({
                 phone={phone}
                 initialState={bootstrap.state}
                 initialReply={{ reply: bootstrap.reply, ui: bootstrap.ui, navLinks: bootstrap.navLinks }}
+                greetingOverride={greetingOverride}
                 onCardCarouselResult={onCardCarouselResult}
                 onRatingChanged={onRatingChanged}
               />

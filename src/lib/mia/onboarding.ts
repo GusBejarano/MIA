@@ -35,6 +35,7 @@ import {
   getBenefitDetail,
   getBenefitLocations,
   getProgramNamesByIds,
+  getSuggestions,
   formatDateEs,
   colorForId,
   type BenefactorOption,
@@ -999,6 +1000,55 @@ export class OnboardingSession {
   }
 
   /**
+   * Tab "Sugerencias" (dev 2.5) - responde una necesidad/ocasion libre (ej.
+   * "quiero invitar a mi esposa a cenar hoy") con hasta 12 beneficios
+   * reales: hasta 7 de benefactores donde el usuario ya tiene relacion +
+   * hasta 5 de afuera (mismo "sin relacion aun" que ya usa el buscador de
+   * negocio, para motivar a declararla). Ver getSuggestions en
+   * discovery.ts para el reparto/orden exacto - aislado ahi, no aqui.
+   */
+  private async resolveSuggestionQuery(need: string): Promise<Turn> {
+    const trimmed = need.trim();
+    if (!trimmed) {
+      const reply = await this.emit(
+        `El usuario penso pedir una sugerencia pero no quedo claro que necesita. Pidele con amabilidad que cuente un poco mas.`
+      );
+      return { reply, ui: [] };
+    }
+
+    const userProgramIds = await getUserProgramIds(this.userId!);
+    const matches = await getSuggestions(trimmed, this.profile.city ?? "", this.userId!, userProgramIds);
+
+    if (matches.length === 0) {
+      const reply = await this.emit(
+        `El usuario pidio una sugerencia: "${trimmed}", pero no se encontro ningun beneficio real que responda a eso en este momento. Dile con honestidad y respeto que por ahora no tienes algo asi, sin inventar nada.`
+      );
+      return { reply, ui: [] };
+    }
+
+    const programNames = await getProgramNamesByIds([...new Set(matches.map((m) => m.sourceProgramId))]);
+
+    const reply = await this.emit(
+      `El usuario pidio una sugerencia: "${trimmed}" y encontraste ${matches.length} beneficios reales que responden a eso. Dale una intro breve y natural confirmando que encontraste opciones - no listes los nombres en texto, los va a ver como tarjetas para tocar.`
+    );
+
+    const carousel: CardCarouselMessage = {
+      type: "card_carousel",
+      cards: matches.map((m) => ({
+        id: m.id,
+        title: m.title,
+        tag: programNames.get(m.sourceProgramId) ?? "",
+        color: colorForId(m.sourceProgramId),
+        thumbUrl: m.thumbUrl,
+        rating: m.rating,
+        relationBadge: userProgramIds.includes(m.sourceProgramId) ? "activa" : "sin_relacion",
+      })),
+    };
+
+    return { reply, ui: [carousel] };
+  }
+
+  /**
    * Punto de entrada para todo lo posterior a la ubicacion. Primero revisa
    * si `chipSelection` corresponde a un id de benefactor real o a un valor
    * de categoria real (los datos mismos dicen que es, no un "paso
@@ -1120,6 +1170,10 @@ export class OnboardingSession {
 
     if (intent.kind === "business_search") {
       return this.resolveBusinessSearch(intent.businessName);
+    }
+
+    if (intent.kind === "suggestion") {
+      return this.resolveSuggestionQuery(intent.need);
     }
 
     // NINGUNA - conversacion normal, grounded, sin inventar nada.

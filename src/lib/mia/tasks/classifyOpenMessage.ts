@@ -6,7 +6,8 @@ export type OpenMessageIntent =
   | { kind: "benefactor"; label: string }
   | { kind: "category_menu" }
   | { kind: "category"; label: string }
-  | { kind: "business_search"; businessName: string };
+  | { kind: "business_search"; businessName: string }
+  | { kind: "suggestion"; need: string };
 
 /**
  * Clasifica un mensaje de conversacion libre en una de 6 intenciones, para
@@ -50,12 +51,20 @@ Clasifica la intencion en EXACTAMENTE una de estas opciones:
   hay de Sushi Green" -> BUSCAR_NEGOCIO:Sushi Green). Si el nombre que
   menciona SI coincide con un benefactor o categoria de las listas de
   arriba, usa esa clasificacion en vez de esta.
+- SUGERENCIA:<resumen breve de 3-6 palabras de lo que busca>: pide una
+  recomendacion para una necesidad u ocasion, SIN nombrar un negocio
+  puntual por su nombre propio (eso es BUSCAR_NEGOCIO) y sin que la
+  respuesta sea simplemente una categoria o benefactor exacto de las
+  listas de arriba (ej. "quiero invitar a mi esposa a cenar hoy", "algo
+  para hacer con mis hijos el finde", "donde hago ejercicio barato" ->
+  SUGERENCIA:cena romantica hoy).
 - NINGUNA: no tiene que ver con ver beneficios, categorias, benefactores,
-  ciudades o negocios puntuales (saludo, agradecimiento, pregunta general
-  sobre como funciona MIA, etc.) - tambien responde NINGUNA si el mensaje
-  habla de cambiar de CIUDAD (eso se clasifica aparte, no es tu trabajo).
+  ciudades, negocios puntuales o sugerencias (saludo, agradecimiento,
+  pregunta general sobre como funciona MIA, etc.) - tambien responde
+  NINGUNA si el mensaje habla de cambiar de CIUDAD (eso se clasifica
+  aparte, no es tu trabajo).
 
-Responde EXACTAMENTE con una linea, uno de: NINGUNA / BENEFACTOR:<nombre> / BENEFACTORES / CATEGORIAS / CATEGORIA:<nombre> / BUSCAR_NEGOCIO:<nombre>`;
+Responde EXACTAMENTE con una linea, uno de: NINGUNA / BENEFACTOR:<nombre> / BENEFACTORES / CATEGORIAS / CATEGORIA:<nombre> / BUSCAR_NEGOCIO:<nombre> / SUGERENCIA:<resumen>`;
 
   const raw = (await miaTask(prompt)).trim();
   const upper = raw.toUpperCase();
@@ -77,6 +86,11 @@ Responde EXACTAMENTE con una linea, uno de: NINGUNA / BENEFACTOR:<nombre> / BENE
   if (upper.startsWith("BUSCAR_NEGOCIO:")) {
     const businessName = raw.slice(raw.indexOf(":") + 1).trim();
     return businessName ? { kind: "business_search", businessName } : { kind: "none" };
+  }
+
+  if (upper.startsWith("SUGERENCIA:")) {
+    const need = raw.slice(raw.indexOf(":") + 1).trim();
+    return need ? { kind: "suggestion", need } : { kind: "none" };
   }
 
   return { kind: "none" };

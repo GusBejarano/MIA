@@ -3,23 +3,23 @@
 import { useEffect, useState } from "react";
 import BenefitGrid, { type GridCard } from "@/components/mia-home/BenefitGrid";
 import NearbyList from "@/components/mia-home/NearbyList";
+import { SUGGESTIONS_EMPTY_MESSAGE } from "@/lib/mia/copy";
 
-type Tab = "conectados" | "cerca" | "explorar";
+type Tab = "conectados" | "cerca" | "sugerencias";
 type CategoryOption = { value: string; label: string; count: number };
 export type Filter = { kind: "preferidos" } | { kind: "category"; value: string; label: string };
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "conectados", label: "Mis Beneficios" },
   { key: "cerca", label: "Cerca de ti" },
-  { key: "explorar", label: "Explorar" },
+  { key: "sugerencias", label: "Sugerencias" },
 ];
 
 export type ChatFilter = { label: string; cards: GridCard[] };
 
 // "Preferidos": mas estrellas primero, luego mas % de descuento primero
 // (feedback explicito, sexta prueba en vivo) - mismo criterio que ya usa
-// el servidor en getConnectedBenefits, aplicado aqui en el cliente porque
-// Explorar reutiliza connectedCards tal cual sin volver a pedirlo.
+// el servidor en getConnectedBenefits.
 function sortByOwnRating(cards: GridCard[]): GridCard[] {
   return [...cards].sort((a, b) => {
     const ratingDiff = (b.rating ?? 0) - (a.rating ?? 0);
@@ -29,13 +29,13 @@ function sortByOwnRating(cards: GridCard[]): GridCard[] {
 }
 
 /**
- * OnB-4 / home de retorno: tabs Conectados / Cerca de ti / Explorar + fila
- * de filtro compartida entre las 3 (debajo de los tabs). Ya no existe un
- * "Todas" que muestre el catalogo completo sin filtrar (demasiado volumen,
- * feedback explicito) - la primera opcion es "Preferidos" (solo beneficios
- * con al menos 1 estrella propia, ordenados de mas a menos estrellas, sin
- * importar categoria) y el resto son categorias reales; siempre hay que
- * elegir una de las dos.
+ * OnB-4 / home de retorno: tabs Conectados / Cerca de ti / Sugerencias +
+ * fila de filtro (Preferidos + categorias reales) exclusiva de Conectados
+ * (ajuste dev 2.5: "Explorar" se elimino - navegar el catalogo completo
+ * por categoria, sin limite a los benefactores conectados, ya no existe en
+ * la app). "Sugerencias" es 100% dependiente de la conversacion con MIA:
+ * sin fila de categorias, sin contenido por defecto - ver el bloque
+ * `tab === "sugerencias"` mas abajo.
  *
  * Tabs y filtro viven FUERA del contenedor que hace scroll: si estuvieran
  * adentro, el alto variable del grid de beneficios podia empujarlos fuera
@@ -54,19 +54,21 @@ export default function HomeTabs({
   chatFilter,
   onClearChatFilter,
   onSelectBenefit,
+  onOpenSuggestionsChat,
   refreshKey,
 }: {
   userId: string;
   chatFilter: ChatFilter | null;
   onClearChatFilter: () => void;
   onSelectBenefit: (id: string, title: string) => void;
+  /** Tocar el tab "Sugerencias" mientras esta vacio (sin chatFilter) abre el chat con el saludo especial - ver MiaHome.tsx. */
+  onOpenSuggestionsChat: () => void;
   refreshKey: number;
 }) {
   const [tab, setTab] = useState<Tab>("conectados");
   const [connectedCards, setConnectedCards] = useState<GridCard[] | null>(null);
   const [categories, setCategories] = useState<CategoryOption[] | null>(null);
   const [filter, setFilter] = useState<Filter>({ kind: "preferidos" });
-  const [explorarCards, setExplorarCards] = useState<GridCard[] | null>(null);
 
   useEffect(() => {
     // Reset a "Cargando..." antes del fetch - refreshKey puede volver a
@@ -90,42 +92,10 @@ export default function HomeTabs({
       .catch(() => setCategories([]));
   }, [userId, refreshKey]);
 
-  useEffect(() => {
-    if (tab !== "explorar" || chatFilter || filter.kind !== "category") {
-      // Limpia resultados de una categoria anterior al salir de Explorar o
-      // cambiar a "Preferidos" - si no, quedarian mostrandose (sin usarse)
-      // la proxima vez que se elija una categoria, con el estado
-      // "Cargando" salteado de menos.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setExplorarCards(null);
-      return;
-    }
-    let cancelled = false;
-    setExplorarCards(null);
-    const params = new URLSearchParams({
-      userId,
-      categoryValue: filter.value,
-      categoryLabel: filter.label,
-    });
-    fetch(`/api/mia/onboarding/explore?${params.toString()}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (!cancelled) setExplorarCards(data.cards ?? []);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tab, chatFilter, filter, userId, refreshKey]);
-
   const visibleConnectedCards =
     filter.kind === "preferidos"
       ? sortByOwnRating((connectedCards ?? []).filter((c) => (c.rating ?? 0) >= 1))
       : (connectedCards ?? []).filter((c) => c.categoryValues?.includes(filter.value));
-
-  const explorarPreferidos =
-    filter.kind === "preferidos"
-      ? sortByOwnRating((connectedCards ?? []).filter((c) => (c.rating ?? 0) >= 1))
-      : null;
 
   // La fila de categorias solo debe mostrar categorias que de verdad
   // tienen al menos un beneficio en "Conectados" ahora mismo (ciudad(es) +
@@ -148,7 +118,16 @@ export default function HomeTabs({
             <button
               key={t.key}
               type="button"
-              onClick={() => setTab(t.key)}
+              onClick={() => {
+                setTab(t.key);
+                // Tocar "Sugerencias" mientras esta vacio abre el chat con
+                // el saludo especial (regla del ajuste) - una vez tiene
+                // resultado (chatFilter), volver a tocar el tab solo
+                // navega, no reabre el chat solo.
+                if (t.key === "sugerencias" && !chatFilter) {
+                  onOpenSuggestionsChat();
+                }
+              }}
               className={
                 tab === t.key
                   ? "flex-1 rounded-lg bg-white py-1.5 text-xs font-semibold text-mia-ink"
@@ -161,11 +140,11 @@ export default function HomeTabs({
         </div>
       </div>
 
-      {/* "Cerca de ti" no usa esta fila - tiene su propio toggle local
-          Todos/Favoritos (ver NearbyList.tsx), sin filtro de categoria
-          (regla explicita del ajuste: la distancia ya es su propio
-          criterio de foco, mezclar categoria encima sobra). */}
-      {tab !== "cerca" && (
+      {/* Exclusiva de "Conectados". "Cerca de ti" tiene su propio toggle
+          local Todos/Favoritos (ver NearbyList.tsx) - la distancia ya es su
+          propio criterio de foco. "Sugerencias" no tiene ningun filtro
+          propio - depende 100% de lo que responda MIA (regla del ajuste). */}
+      {tab !== "cerca" && tab !== "sugerencias" && (
         <div className="shrink-0 overflow-x-auto px-4 pb-2 pt-2">
           <div className="flex w-max gap-2">
             <button
@@ -212,8 +191,8 @@ export default function HomeTabs({
           />
         )}
 
-        {/* A diferencia de Conectados/Explorar (cuyos datos viven aqui arriba,
-            en HomeTabs, y sobreviven un cambio de pestaña sin problema),
+        {/* A diferencia de Conectados (cuyos datos viven aqui arriba, en
+            HomeTabs, y sobreviven un cambio de pestaña sin problema),
             NearbyList maneja su propio estado de geolocalizacion. Con
             renderizado condicional (`&&`) se desmontaba por completo al
             salir de la pestaña y volvia a montarse de cero al regresar,
@@ -227,34 +206,26 @@ export default function HomeTabs({
           <NearbyList userId={userId} onSelectBenefit={onSelectBenefit} refreshKey={refreshKey} />
         </div>
 
-        {tab === "explorar" && (
+        {tab === "sugerencias" && (
           <div className="flex flex-col gap-3">
             {chatFilter ? (
               <>
-                <div className="flex w-fit items-center gap-2 rounded-full bg-[#F3E8FE] px-3 py-1.5 text-xs text-mia-violet">
-                  <span>{chatFilter.label}</span>
-                  <button type="button" onClick={onClearChatFilter} aria-label="Quitar filtro">
-                    ×
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-xs font-semibold text-mia-violet">{chatFilter.label}</span>
+                  <button
+                    type="button"
+                    onClick={onClearChatFilter}
+                    className="shrink-0 rounded-full border border-zinc-200 px-3 py-1 text-xs font-semibold text-mia-ink"
+                  >
+                    Limpiar
                   </button>
                 </div>
                 <BenefitGrid cards={chatFilter.cards} onSelect={onSelectBenefit} emptyMessage="" />
               </>
-            ) : filter.kind === "preferidos" ? (
-              <BenefitGrid
-                cards={explorarPreferidos ?? []}
-                onSelect={onSelectBenefit}
-                emptyMessage={
-                  connectedCards === null
-                    ? "Cargando..."
-                    : "Aún no le has puesto estrellas a ningún beneficio. Califica uno desde su ficha para verlo aquí."
-                }
-              />
             ) : (
-              <BenefitGrid
-                cards={explorarCards ?? []}
-                onSelect={onSelectBenefit}
-                emptyMessage={explorarCards === null ? "Cargando..." : "Sin beneficios en esta categoría todavía"}
-              />
+              <p className="whitespace-pre-line px-1 py-16 text-center text-sm text-zinc-400">
+                {SUGGESTIONS_EMPTY_MESSAGE}
+              </p>
             )}
           </div>
         )}

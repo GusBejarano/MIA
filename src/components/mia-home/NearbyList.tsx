@@ -236,9 +236,9 @@ export default function NearbyList({
   return (
     <div className="flex flex-col gap-3">
       {/* Mismo estilo de pildora (gradiente activo / borde inactivo) y mismo
-          padding (pt-2 pb-2) que la fila de filtro compartida de "Mis
-          Beneficios"/"Explorar" en HomeTabs.tsx - este tab no la reutiliza
-          (no tiene filtro de categoria), pero debe verse igual. */}
+          padding (pt-2 pb-2) que la fila de filtro de "Mis Beneficios" en
+          HomeTabs.tsx - este tab no la reutiliza (no tiene filtro de
+          categoria), pero debe verse igual. */}
       <div className="flex w-max gap-2 pt-2 pb-2">
         <button
           type="button"

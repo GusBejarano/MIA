@@ -14,6 +14,7 @@ import DetailSheet from "@/components/mia/DetailSheet";
 import type { GridCard } from "@/components/mia-home/BenefitGrid";
 import type { AvatarKey } from "@/lib/mia/store";
 import type { DetailSheetMessage } from "@/lib/mia/uiMessages";
+import { suggestionsChatGreeting } from "@/lib/mia/copy";
 
 type Step = "welcome" | "connect" | "cities" | "tabs";
 
@@ -54,6 +55,13 @@ export default function MiaHome() {
   const [chatBootstrap, setChatBootstrap] = useState<ChatBootstrap | null>(null);
   const [chatOverlayOpen, setChatOverlayOpen] = useState(false);
   const [chatFilter, setChatFilter] = useState<ChatFilter | null>(null);
+  const [userName, setUserName] = useState<string | null>(null);
+  // Tocar "Sugerencias" vacio abre el chat con un saludo especial (ver
+  // copy.ts) - se apaga al cerrar el chat para no repetirlo si se vuelve a
+  // abrir por el boton flotante en cualquier otro momento (regla del
+  // ajuste: solo una vez por "vacio", sin logica de "primera vez" mas
+  // complicada que eso).
+  const [suggestionsGreetingPending, setSuggestionsGreetingPending] = useState(false);
   const [directDetail, setDirectDetail] = useState<DetailSheetMessage | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
@@ -78,10 +86,11 @@ export default function MiaHome() {
         (data: {
           cities?: string[];
           connections?: { programName: string; prioridad: number }[];
-          profile?: { avatar: AvatarKey };
+          profile?: { avatar: AvatarKey; name?: string | null };
         }) => {
           setCities(data.cities ?? []);
           setAvatar(data.profile?.avatar ?? "negro");
+          setUserName(data.profile?.name ?? null);
           const sorted = [...(data.connections ?? [])].sort((a, b) => b.prioridad - a.prioridad);
           setTopBenefactor(
             sorted.length === 0
@@ -200,20 +209,46 @@ export default function MiaHome() {
   }
 
   function handleCardCarouselResult(
-    carousel: { cards: { id: string; title: string; tag: string; thumbUrl: string | null; rating?: number }[] },
+    carousel: {
+      cards: {
+        id: string;
+        title: string;
+        tag: string;
+        thumbUrl: string | null;
+        rating?: number;
+        /** Solo presente en carruseles de busqueda de negocio/sugerencias - ver relationBadge en uiMessages.ts. */
+        relationBadge?: "activa" | "sin_relacion";
+      }[];
+    },
     queryLabel: string
   ) {
     // Sin cityLabel/discountPercent aqui: el carrusel del chat (produccion,
     // sin tocar) no los trae - la tarjeta simplemente no muestra esos dos
     // badges para resultados de busqueda por chat, degrada con gracia.
+    // `connected` solo lo trae relationBadge (busqueda de negocio o
+    // sugerencias) - un carrusel de categoria normal no lo trae, ambos
+    // casos (undefined o "sin_relacion") se ven identicos (badge oculto),
+    // asi que no hay regresion para ese caso.
     const cards: GridCard[] = carousel.cards.map((c) => ({
       id: c.id,
       title: c.title,
       tag: c.tag,
       thumbUrl: c.thumbUrl,
       rating: c.rating,
+      connected: c.relationBadge === "activa",
     }));
+    // "Sugerencias" no acumula: chatFilter es un solo valor, siempre
+    // reemplaza el anterior (nunca conviven dos busquedas a la vez ahi,
+    // regla del ajuste) - "Conectados" no se ve afectado por este cambio,
+    // ese tab ya no consume chatFilter (se elimino junto con "Explorar").
     setChatFilter({ label: queryLabel, cards });
+  }
+
+  // Tocar el tab "Sugerencias" mientras esta vacio abre el chat con el
+  // saludo especial en vez del saludo real de produccion - ver copy.ts.
+  function handleOpenSuggestionsChat() {
+    setSuggestionsGreetingPending(true);
+    setChatOverlayOpen(true);
   }
 
   if (step === "welcome") {
@@ -342,6 +377,7 @@ export default function MiaHome() {
         chatFilter={chatFilter}
         onClearChatFilter={() => setChatFilter(null)}
         onSelectBenefit={viewDetail}
+        onOpenSuggestionsChat={handleOpenSuggestionsChat}
         refreshKey={connectionsVersion}
       />
 
@@ -369,7 +405,14 @@ export default function MiaHome() {
         phone={phone}
         bootstrap={chatBootstrap}
         isOpen={chatOverlayOpen}
-        onOpenChange={setChatOverlayOpen}
+        onOpenChange={(open) => {
+          setChatOverlayOpen(open);
+          // Se apaga al cerrar - si se reabre por el boton flotante en
+          // cualquier otro momento (no desde "Sugerencias" vacio), debe
+          // verse el saludo real, no el especial (regla del ajuste).
+          if (!open) setSuggestionsGreetingPending(false);
+        }}
+        greetingOverride={suggestionsGreetingPending ? suggestionsChatGreeting(userName) : undefined}
         onCardCarouselResult={handleCardCarouselResult}
         onRatingChanged={() => setConnectionsVersion((v) => v + 1)}
       />
