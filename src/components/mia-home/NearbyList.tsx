@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { getPosition, haversineKm } from "@/lib/mia/geolocationClient";
 import { NEARBY_HABITUAL_GATE_MESSAGE, NEARBY_EMPTY_STATE_MESSAGE, NEARBY_RADIUS_EMPTY_MESSAGE } from "@/lib/mia/copy";
 import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
@@ -13,13 +14,28 @@ import type { GridCard } from "@/components/mia-home/BenefitGrid";
 // distancia contra una sede lejana (bug reportado: "estoy a 0.4km pero no
 // aparece en la lista").
 type NearbyCard = GridCard & { locations: { lat: number; lng: number }[] };
-type LocationState = "before" | "denied" | "granted";
+// "checking" = redeteccion silenciosa en curso (perfil -> getPosition ->
+// beneficios, puede tardar varios segundos sin GPS en computador) - antes
+// se mostraba el mismo botón "Compartir mi ubicación" que el estado "before"
+// durante toda esa espera, lo cual confundia (parecia estar pidiendo el
+// permiso otra vez cuando en realidad ya lo tenia y solo estaba calculando).
+type LocationState = "checking" | "before" | "denied" | "granted";
 type MaturityLevel = "explorador" | "habitual" | "frecuente";
 
 const MIN_RADIUS_M = 100;
 const MAX_RADIUS_M = 1000;
 const RADIUS_STEP_M = 100;
 const DEFAULT_RADIUS_M = 500;
+
+// Frases cortas que rotan mientras se calcula la posicion - una sola no
+// alcanza para 10 segundos sin sentirse trabada (feedback explicito).
+const CHECKING_MESSAGES = [
+  "Buscando lo que tienes cerca...",
+  "Calculando distancias...",
+  "Ubicando tus beneficios...",
+  "Ya casi...",
+];
+const CHECKING_MESSAGE_INTERVAL_MS = 1800;
 
 function formatDistance(km: number): string {
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
@@ -51,7 +67,8 @@ export default function NearbyList({
   /** Sube al conectar/desconectar un benefactor o agregar/quitar una ciudad (ver MiaHome.tsx) - si el permiso ya estaba concedido, vuelve a pedir los beneficios sin re-pedir el permiso. */
   refreshKey?: number;
 }) {
-  const [locState, setLocState] = useState<LocationState>("before");
+  const [locState, setLocState] = useState<LocationState>("checking");
+  const [checkingMessageIndex, setCheckingMessageIndex] = useState(0);
   const [cards, setCards] = useState<(NearbyCard & { distanceKm: number })[] | null>(null);
   const [maturityLevel, setMaturityLevel] = useState<MaturityLevel>("explorador");
   const [loading, setLoading] = useState(false);
@@ -59,6 +76,14 @@ export default function NearbyList({
   const [radiusMeters, setRadiusMeters] = useState(DEFAULT_RADIUS_M);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const lastPosition = useRef<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    if (locState !== "checking") return;
+    const id = setInterval(() => {
+      setCheckingMessageIndex((i) => (i + 1) % CHECKING_MESSAGES.length);
+    }, CHECKING_MESSAGE_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [locState]);
 
   async function fetchNearby(lat: number, lng: number) {
     const res = await fetch(`/api/mia/onboarding/benefits?userId=${userId}&tab=cerca`);
@@ -112,15 +137,20 @@ export default function NearbyList({
     fetch(`/api/mia/onboarding/profile?userId=${userId}`)
       .then((r) => r.json())
       .then(async (data: { profile?: { locationPermissionGranted?: boolean } }) => {
-        if (!data.profile?.locationPermissionGranted) return;
+        if (!data.profile?.locationPermissionGranted) {
+          setLocState("before");
+          return;
+        }
         const pos = await getPosition();
         lastPosition.current = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         await fetchNearby(pos.coords.latitude, pos.coords.longitude);
         setLocState("granted");
       })
       .catch(() => {
-        // Sin permiso silencioso disponible - se queda en "before", el
-        // usuario ve el boton normal.
+        // Fallo el chequeo silencioso (permiso revocado, la BD dijo que
+        // no, o un error de red) - pasa a "before", el usuario ve el
+        // boton normal en vez de quedar atascado en "checking".
+        setLocState("before");
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
@@ -135,6 +165,26 @@ export default function NearbyList({
     fetchNearby(lastPosition.current.lat, lastPosition.current.lng).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
+
+  if (locState === "checking") {
+    return (
+      <div className="flex flex-col items-center gap-3 py-10 text-center">
+        <Image
+          src="/logo/mia-icon.png"
+          alt=""
+          width={36}
+          height={36}
+          className="h-9 w-9 animate-pulse"
+        />
+        <p className="text-sm text-zinc-500">{CHECKING_MESSAGES[checkingMessageIndex]}</p>
+        <div className="flex items-center gap-1">
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-mia-violet [animation-delay:-0.3s]" />
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-mia-violet [animation-delay:-0.15s]" />
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-mia-violet" />
+        </div>
+      </div>
+    );
+  }
 
   if (locState !== "granted") {
     return (
