@@ -30,6 +30,17 @@ type Step = "welcome" | "connect" | "cities" | "tabs";
 // ("+57..."), sin ningun cambio de esquema.
 const COUNTRY_CODES = [{ code: "+57", label: "CO (+57)" }];
 
+// Metadatos de build inyectados en next.config.ts (ver NEXT_PUBLIC_* ahi) -
+// mismo patron ya usado en MiaChat.tsx y /admin/layout.tsx, nunca antes en
+// este shell nuevo (dev 2.5) - version manual de package.json + hash corto
+// del commit + prefijo de entorno ("dev-" fuera de main en Netlify, vacio
+// en produccion). Util para soporte: identifica exactamente que build esta
+// viendo la persona sin tener que preguntarle.
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0";
+const BUILD_HASH = process.env.NEXT_PUBLIC_BUILD_HASH ?? "local";
+const ENV_PREFIX = process.env.NEXT_PUBLIC_ENV_PREFIX ?? "dev-";
+const VERSION_LABEL = `v${APP_VERSION} · ${ENV_PREFIX}${BUILD_HASH}`;
+
 // Recuerda phone+userId de este dispositivo (dev 2.5) - a diferencia de
 // REMEMBERED_PHONE_KEY (MiaChat.tsx, solo precarga el input), esto salta
 // directo a los tabs en un regreso: OnB-1/2/3 no vuelven a mostrarse.
@@ -376,10 +387,18 @@ export default function MiaHome() {
 
   return (
     <div className="flex h-dvh flex-col bg-white">
-      <div className="flex shrink-0 items-center gap-2 border-b border-zinc-100 px-4 pt-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-zinc-100 px-4 pt-3">
+        {/* flex-wrap: la etiqueta de version es lo primero que debe ceder
+            espacio en pantallas angostas - cae a una segunda linea en vez
+            de recortarse o forzar scroll horizontal (pedido explicito: sin
+            afectar la UX). */}
         <Image src="/logo/mia-icon.png" alt="" width={22} height={22} className="h-[22px] w-[22px]" />
         <span className="mia-gradient-text text-base font-bold">mia</span>
         <span className="text-[11px] text-zinc-400">by Descuentos Inteligentes</span>
+        {/* Para soporte: identifica exactamente que build esta viendo la
+            persona sin tener que preguntarle - mismo dato que ya se usa en
+            MiaChat.tsx/admin/layout.tsx, nunca antes en este shell. */}
+        <span className="text-[10px] text-zinc-300">· {VERSION_LABEL}</span>
       </div>
 
       <header className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-zinc-100 px-4 py-3">
