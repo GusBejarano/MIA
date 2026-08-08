@@ -2,59 +2,63 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getPosition, haversineKm } from "@/lib/mia/geolocationClient";
-import { NEARBY_HABITUAL_GATE_MESSAGE, NEARBY_EMPTY_STATE_MESSAGE } from "@/lib/mia/copy";
+import { NEARBY_HABITUAL_GATE_MESSAGE, NEARBY_EMPTY_STATE_MESSAGE, NEARBY_RADIUS_EMPTY_MESSAGE } from "@/lib/mia/copy";
 import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
 import { Star } from "@/components/mia/RatingStars";
 import type { GridCard } from "@/components/mia-home/BenefitGrid";
-import type { Filter } from "@/components/mia-home/HomeTabs";
 
 type NearbyCard = GridCard & { lat: number; lng: number };
 type LocationState = "before" | "denied" | "granted";
+type MaturityLevel = "explorador" | "habitual" | "frecuente";
+
+const MIN_RADIUS_M = 100;
+const MAX_RADIUS_M = 1000;
+const RADIUS_STEP_M = 100;
+const DEFAULT_RADIUS_M = 500;
+
+function formatDistance(km: number): string {
+  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+}
 
 /**
- * Tab "Cerca de ti" (OnB-4.1) - sin API de mapas (decision de producto, ver
- * ajuste dev 2.5): lista ordenada por distancia con haversineKm, mismo
- * patron que ya usa DetailSheet.tsx para ordenar sedes. Gateado por
- * getUserMaturityLevel via /api/mia/onboarding/benefits - hoy siempre
- * "explorador", asi que siempre se ve esta version de lista.
+ * Tab "Cerca de ti" - dos escenarios segun nivel de madurez
+ * (getUserMaturityLevel, unico punto de control - hoy siempre
+ * "explorador", el escenario Habitual queda armado pero inalcanzable en
+ * la practica):
  *
- * `filter="preferidos"` cambia el orden a calificacion propia (mas
- * estrellas primero) en vez de distancia - mismo criterio que Conectados/
- * Explorar cuando esta seleccionado ese filtro (ver HomeTabs.tsx).
+ * - Explorador (este archivo, escenario activo hoy): sin mapa, texto
+ *   informativo + slider de radio (100-1000 m, pasos de 100) + lista
+ *   ordenada por distancia. Toggle local "Todos"/"Favoritos" (favorito =
+ *   al menos 1 estrella propia, misma calificacion de benefit_ratings que
+ *   ya existe - NO hay filtro de categoria en este tab).
+ * - Habitual: mapa real con pines - placeholder por ahora (decision
+ *   explicita: se construye de verdad cuando el nivel Habitual sea
+ *   alcanzable y se confirme la integracion con Google Maps).
  */
 export default function NearbyList({
   userId,
   onSelectBenefit,
-  filter,
   refreshKey,
 }: {
   userId: string;
   onSelectBenefit: (id: string, title: string) => void;
-  filter: Filter;
   /** Sube al conectar/desconectar un benefactor o agregar/quitar una ciudad (ver MiaHome.tsx) - si el permiso ya estaba concedido, vuelve a pedir los beneficios sin re-pedir el permiso. */
   refreshKey?: number;
 }) {
   const [locState, setLocState] = useState<LocationState>("before");
   const [cards, setCards] = useState<(NearbyCard & { distanceKm: number })[] | null>(null);
+  const [maturityLevel, setMaturityLevel] = useState<MaturityLevel>("explorador");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [radiusMeters, setRadiusMeters] = useState(DEFAULT_RADIUS_M);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const lastPosition = useRef<{ lat: number; lng: number } | null>(null);
-
-  const visibleCards =
-    filter.kind === "preferidos"
-      ? [...(cards ?? [])]
-          .filter((c) => (c.rating ?? 0) >= 1)
-          .sort((a, b) => {
-            const ratingDiff = (b.rating ?? 0) - (a.rating ?? 0);
-            if (ratingDiff !== 0) return ratingDiff;
-            return (b.discountPercent ?? -1) - (a.discountPercent ?? -1);
-          })
-      : (cards ?? []).filter((c) => c.categoryValues?.includes(filter.value));
 
   async function fetchNearby(lat: number, lng: number) {
     const res = await fetch(`/api/mia/onboarding/benefits?userId=${userId}&tab=cerca`);
     if (!res.ok) throw new Error();
-    const data: { cards: NearbyCard[] } = await res.json();
+    const data: { cards: NearbyCard[]; maturityLevel?: MaturityLevel } = await res.json();
+    setMaturityLevel(data.maturityLevel ?? "explorador");
     const sorted = data.cards
       .map((c) => ({ ...c, distanceKm: haversineKm(lat, lng, c.lat, c.lng) }))
       .sort((a, b) => a.distanceKm - b.distanceKm);
@@ -122,8 +126,68 @@ export default function NearbyList({
     );
   }
 
+  if (maturityLevel !== "explorador") {
+    // Escenario 2 (Habitual) - inalcanzable hoy (getUserMaturityLevel
+    // siempre devuelve "explorador"), placeholder deliberado hasta que se
+    // confirme la integracion real con Google Maps.
+    return (
+      <div className="flex flex-col items-center gap-2 py-10 text-center">
+        <p className="max-w-xs text-sm text-zinc-500">El mapa con tus descuentos cerca se está preparando.</p>
+      </div>
+    );
+  }
+
+  const withinRadius = (cards ?? []).filter((c) => c.distanceKm * 1000 <= radiusMeters);
+  const visibleCards = favoritesOnly
+    ? [...withinRadius]
+        .filter((c) => (c.rating ?? 0) >= 1)
+        .sort((a, b) => {
+          const ratingDiff = (b.rating ?? 0) - (a.rating ?? 0);
+          if (ratingDiff !== 0) return ratingDiff;
+          return (b.discountPercent ?? -1) - (a.discountPercent ?? -1);
+        })
+    : withinRadius;
+
   return (
     <div className="flex flex-col gap-3">
+      <div className="flex w-fit gap-1 rounded-xl bg-zinc-100 p-1">
+        <button
+          type="button"
+          onClick={() => setFavoritesOnly(false)}
+          className={
+            !favoritesOnly
+              ? "rounded-lg bg-white px-4 py-1.5 text-xs font-semibold text-mia-ink"
+              : "rounded-lg px-4 py-1.5 text-xs font-medium text-zinc-500"
+          }
+        >
+          Todos
+        </button>
+        <button
+          type="button"
+          onClick={() => setFavoritesOnly(true)}
+          className={
+            favoritesOnly
+              ? "rounded-lg bg-white px-4 py-1.5 text-xs font-semibold text-mia-ink"
+              : "rounded-lg px-4 py-1.5 text-xs font-medium text-zinc-500"
+          }
+        >
+          ★ Favoritos
+        </button>
+      </div>
+
+      <div>
+        <p className="mb-1 text-xs text-zinc-500">{radiusMeters} m a la redonda</p>
+        <input
+          type="range"
+          min={MIN_RADIUS_M}
+          max={MAX_RADIUS_M}
+          step={RADIUS_STEP_M}
+          value={radiusMeters}
+          onChange={(e) => setRadiusMeters(Number(e.target.value))}
+          className="w-full accent-mia-violet"
+        />
+      </div>
+
       <div className="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3">
         {visibleCards.map((card) => (
           <button
@@ -139,6 +203,9 @@ export default function NearbyList({
                   Hasta {card.discountPercent}%
                 </span>
               )}
+              <span className="absolute right-1.5 top-1.5 rounded-full bg-white/90 px-2 py-0.5 text-[9px] font-bold text-mia-ink shadow-sm">
+                {formatDistance(card.distanceKm)}
+              </span>
             </div>
             <div className="mx-2 mt-1.5 flex items-center justify-between gap-1">
               <span className="inline-block truncate rounded-full bg-[#F3E8FE] px-2 py-0.5 text-[10px] font-semibold text-mia-violet">
@@ -156,19 +223,20 @@ export default function NearbyList({
               {card.title}
             </p>
             {card.cityLabel && (
-              <p className="px-2 pt-0.5 text-[10px] text-zinc-400">📍 {card.cityLabel}</p>
+              <p className="px-2 pb-2 pt-0.5 text-[10px] text-zinc-400">📍 {card.cityLabel}</p>
             )}
-            <p className="px-2 pb-2 pt-0.5 text-[11px] font-semibold text-mia-violet">
-              {card.distanceKm < 1
-                ? `${Math.round(card.distanceKm * 1000)} m`
-                : `${card.distanceKm.toFixed(1)} km`}
-            </p>
           </button>
         ))}
       </div>
 
       {visibleCards.length === 0 && (
-        <p className="px-1 py-4 text-center text-sm text-zinc-400">{NEARBY_EMPTY_STATE_MESSAGE}</p>
+        <p className="px-1 py-4 text-center text-sm text-zinc-400">
+          {(cards ?? []).length === 0
+            ? NEARBY_EMPTY_STATE_MESSAGE
+            : favoritesOnly
+              ? "Aún no le has puesto estrellas a ningún beneficio cercano. Califica uno desde su ficha para verlo aquí."
+              : NEARBY_RADIUS_EMPTY_MESSAGE}
+        </p>
       )}
 
       <p className="mt-2 rounded-2xl bg-[#F3E8FE] px-4 py-3 text-center text-xs text-mia-violet">

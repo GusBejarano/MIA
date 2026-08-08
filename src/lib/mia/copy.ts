@@ -27,3 +27,6 @@ export const NEARBY_HABITUAL_GATE_MESSAGE =
 
 export const NEARBY_EMPTY_STATE_MESSAGE =
   "Todavía no tenemos sedes ubicadas para tus benefactores conectados en esta zona. Estamos sumando más sedes al mapa.";
+
+export const NEARBY_RADIUS_EMPTY_MESSAGE =
+  "No hay beneficios dentro de este radio - prueba ampliándolo.";

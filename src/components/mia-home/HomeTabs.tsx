@@ -161,35 +161,41 @@ export default function HomeTabs({
         </div>
       </div>
 
-      <div className="shrink-0 overflow-x-auto px-4 pb-2 pt-2">
-        <div className="flex w-max gap-2">
-          <button
-            type="button"
-            onClick={() => setFilter({ kind: "preferidos" })}
-            className={
-              filter.kind === "preferidos"
-                ? "shrink-0 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-3 py-1.5 text-xs font-semibold text-white"
-                : "shrink-0 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-mia-ink"
-            }
-          >
-            ★ Preferidos
-          </button>
-          {visibleCategories.map((c) => (
+      {/* "Cerca de ti" no usa esta fila - tiene su propio toggle local
+          Todos/Favoritos (ver NearbyList.tsx), sin filtro de categoria
+          (regla explicita del ajuste: la distancia ya es su propio
+          criterio de foco, mezclar categoria encima sobra). */}
+      {tab !== "cerca" && (
+        <div className="shrink-0 overflow-x-auto px-4 pb-2 pt-2">
+          <div className="flex w-max gap-2">
             <button
-              key={c.value}
               type="button"
-              onClick={() => setFilter({ kind: "category", value: c.value, label: c.label })}
+              onClick={() => setFilter({ kind: "preferidos" })}
               className={
-                filter.kind === "category" && filter.value === c.value
+                filter.kind === "preferidos"
                   ? "shrink-0 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-3 py-1.5 text-xs font-semibold text-white"
                   : "shrink-0 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-mia-ink"
               }
             >
-              {c.label}
+              ★ Preferidos
             </button>
-          ))}
+            {visibleCategories.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                onClick={() => setFilter({ kind: "category", value: c.value, label: c.label })}
+                className={
+                  filter.kind === "category" && filter.value === c.value
+                    ? "shrink-0 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-3 py-1.5 text-xs font-semibold text-white"
+                    : "shrink-0 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-mia-ink"
+                }
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-4 pb-3">
         {tab === "conectados" && (
@@ -207,12 +213,7 @@ export default function HomeTabs({
         )}
 
         {tab === "cerca" && (
-          <NearbyList
-            userId={userId}
-            onSelectBenefit={onSelectBenefit}
-            filter={filter}
-            refreshKey={refreshKey}
-          />
+          <NearbyList userId={userId} onSelectBenefit={onSelectBenefit} refreshKey={refreshKey} />
         )}
 
         {tab === "explorar" && (
