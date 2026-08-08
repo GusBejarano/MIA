@@ -3,6 +3,25 @@ import { colorForString } from "./colorPalette";
 import { getRatingsForBenefits } from "./store";
 
 /**
+ * Capitaliza un valor de ciudad ya normalizado (minusculas, sin tildes -
+ * ver city_list) para mostrarlo - ej. "jamundi" -> "Jamundi", "valle del
+ * cauca" -> "Valle Del Cauca". Fallback temporal: lo correcto seria leer
+ * `benefits.display_city_list` (grafia original, con tildes), pero esa
+ * columna NO existe todavia en la base real - el archivo que la crea
+ * (supabase/2026.07.27-mia_city_accent_normalization.sql) esta en el repo
+ * desde julio pero nunca se corrio contra la base de datos (confirmado en
+ * vivo: consultarla da error 42703, "column does not exist"). Cuando se
+ * corra esa migracion, cambiar cityLabel para leer display_city_list en
+ * vez de esto.
+ */
+function capitalizeCity(normalized: string): string {
+  return normalized
+    .split(" ")
+    .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : word))
+    .join(" ");
+}
+
+/**
  * % de descuento "desde" (el mas bajo de los que aparezcan) extraido del
  * texto libre de `conditions` - NO hay ningun campo estructurado de
  * descuento en el esquema (confirmado: benefits no tiene discount_percent
@@ -434,7 +453,7 @@ export async function getConnectedBenefits(
 
   const { data, error } = await supabase
     .from("benefits")
-    .select("id, title, source_program_id, image_url, category_list, city_list, display_city_list, conditions")
+    .select("id, title, source_program_id, image_url, category_list, city_list, conditions")
     .eq("status", "activo")
     .in("source_program_id", programIds)
     .overlaps("city_list", scopeKeys);
@@ -455,10 +474,8 @@ export async function getConnectedBenefits(
 
   const cards: ConnectedBenefitCard[] = (data ?? []).map((row) => {
     const cityList = (row.city_list as string[] | null) ?? [];
-    const displayCityList = (row.display_city_list as string[] | null) ?? [];
-    const matchedIndex = cityList.findIndex((c) => userCityValues.has(c));
-    const cityLabel =
-      (matchedIndex >= 0 ? displayCityList[matchedIndex] : displayCityList[0]) ?? "Nacional";
+    const matchedCity = cityList.find((c) => userCityValues.has(c)) ?? cityList[0];
+    const cityLabel = matchedCity ? capitalizeCity(matchedCity) : "Nacional";
     return {
       id: row.id as string,
       title: row.title as string,
@@ -551,7 +568,7 @@ export async function getNearbyConnectedBenefits(
 
   const { data: benefitRows, error: benefitsError } = await supabase
     .from("benefits")
-    .select("id, title, source_program_id, image_url, category_list, city_list, display_city_list, conditions")
+    .select("id, title, source_program_id, image_url, category_list, city_list, conditions")
     .eq("status", "activo")
     .in("source_program_id", programIds)
     .in("id", [...coordsByBenefit.keys()]);
@@ -573,10 +590,8 @@ export async function getNearbyConnectedBenefits(
   return benefitRows.map((row) => {
     const coords = coordsByBenefit.get(row.id as string)!;
     const cityList = (row.city_list as string[] | null) ?? [];
-    const displayCityList = (row.display_city_list as string[] | null) ?? [];
-    const matchedIndex = cityList.findIndex((c) => userCityValues.has(c));
-    const cityLabel =
-      (matchedIndex >= 0 ? displayCityList[matchedIndex] : displayCityList[0]) ?? "Nacional";
+    const matchedCity = cityList.find((c) => userCityValues.has(c)) ?? cityList[0];
+    const cityLabel = matchedCity ? capitalizeCity(matchedCity) : "Nacional";
     return {
       id: row.id as string,
       title: row.title as string,
