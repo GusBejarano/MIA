@@ -212,9 +212,20 @@ export default function HomeTabs({
           />
         )}
 
-        {tab === "cerca" && (
+        {/* A diferencia de Conectados/Explorar (cuyos datos viven aqui arriba,
+            en HomeTabs, y sobreviven un cambio de pestaña sin problema),
+            NearbyList maneja su propio estado de geolocalizacion. Con
+            renderizado condicional (`&&`) se desmontaba por completo al
+            salir de la pestaña y volvia a montarse de cero al regresar,
+            perdiendo el "ya concedido" y repitiendo todo el flujo de
+            redeteccion (perfil -> getPosition -> beneficios) cada vez - si
+            cualquier paso fallaba en silencio, el boton de "Compartir mi
+            ubicacion" volvia a aparecer aunque el permiso siguiera bien en
+            BD (bug reportado). Se mantiene siempre montado y solo se oculta
+            con CSS - la redeteccion corre una sola vez por sesion. */}
+        <div className={tab === "cerca" ? "" : "hidden"}>
           <NearbyList userId={userId} onSelectBenefit={onSelectBenefit} refreshKey={refreshKey} />
-        )}
+        </div>
 
         {tab === "explorar" && (
           <div className="flex flex-col gap-3">
