@@ -36,6 +36,7 @@ export default function ChatOverlay({
   suggestionsOnly,
   onCardCarouselResult,
   onRatingChanged,
+  onGoToSuggestions,
 }: {
   phone: string;
   bootstrap: ChatBootstrap | null;
@@ -45,11 +46,13 @@ export default function ChatOverlay({
   onOpenChange: (open: boolean) => void;
   /** Saludo especial del tab "Sugerencias" vacío - ver ChatPanel.tsx. */
   greetingOverride?: string;
-  /** Ver ChatPanel.tsx - "Ver en Sugerencias" en vez de carrusel inline, y cierra este overlay al tocarlo (onGoToSuggestions = () => onOpenChange(false), no necesita prop aparte). */
+  /** Ver ChatPanel.tsx - "Ver en Sugerencias" en vez de carrusel inline. */
   suggestionsOnly?: boolean;
   onCardCarouselResult?: (carousel: CardCarouselMessage, queryLabel: string) => void;
   /** Calificar un beneficio desde el detalle abierto DENTRO del chat tambien debe invalidar el cache de Conectados/Preferidos - ver DetailSheet.tsx. */
   onRatingChanged?: () => void;
+  /** Tap en "Ver en Sugerencias" (ver ChatPanel.tsx) - ademas de cerrar este overlay, MiaHome.tsx usa esto para cambiar el tab activo de HomeTabs a "Sugerencias" si la persona estaba en otro tab cuando abrio el chat (bug reportado: el link cerraba el chat pero dejaba el tab de antes, "Mis Beneficios", en pantalla). */
+  onGoToSuggestions?: () => void;
 }) {
   return (
     <>
@@ -95,7 +98,10 @@ export default function ChatOverlay({
                 greetingOverride={greetingOverride}
                 suggestionsOnly={suggestionsOnly}
                 onCardCarouselResult={onCardCarouselResult}
-                onGoToSuggestions={() => onOpenChange(false)}
+                onGoToSuggestions={() => {
+                  onOpenChange(false);
+                  onGoToSuggestions?.();
+                }}
                 onRatingChanged={onRatingChanged}
               />
             ) : (

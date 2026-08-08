@@ -72,6 +72,11 @@ export default function MiaHome() {
   // (continuidad real de la conversacion al reabrir).
   const [chatHasOpenedOnce, setChatHasOpenedOnce] = useState(false);
   const [chatFilter, setChatFilter] = useState<ChatFilter | null>(null);
+  // Sube en cada tap de "Ver en Sugerencias" dentro del chat - HomeTabs.tsx
+  // lo usa para cambiar el tab activo a "Sugerencias" sin importar en cual
+  // tab estaba la persona cuando abrio el chat (bug reportado: el link
+  // cerraba el chat pero dejaba "Mis Beneficios" en pantalla).
+  const [goToSuggestionsSignal, setGoToSuggestionsSignal] = useState(0);
   const [userName, setUserName] = useState<string | null>(null);
   const [directDetail, setDirectDetail] = useState<DetailSheetMessage | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -436,6 +441,7 @@ export default function MiaHome() {
         onClearChatFilter={() => setChatFilter(null)}
         onSelectBenefit={viewDetail}
         onOpenSuggestionsChat={openChat}
+        goToSuggestionsSignal={goToSuggestionsSignal}
         refreshKey={connectionsVersion}
       />
 
@@ -480,6 +486,7 @@ export default function MiaHome() {
         greetingOverride={suggestionsChatGreeting(userName)}
         suggestionsOnly
         onCardCarouselResult={handleCardCarouselResult}
+        onGoToSuggestions={() => setGoToSuggestionsSignal((n) => n + 1)}
         onRatingChanged={() => setConnectionsVersion((v) => v + 1)}
       />
 

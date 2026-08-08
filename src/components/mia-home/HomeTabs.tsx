@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import BenefitGrid, { type GridCard } from "@/components/mia-home/BenefitGrid";
 import NearbyList from "@/components/mia-home/NearbyList";
 import { SUGGESTIONS_EMPTY_MESSAGE } from "@/lib/mia/copy";
@@ -55,6 +55,7 @@ export default function HomeTabs({
   onClearChatFilter,
   onSelectBenefit,
   onOpenSuggestionsChat,
+  goToSuggestionsSignal,
   refreshKey,
 }: {
   userId: string;
@@ -63,12 +64,23 @@ export default function HomeTabs({
   onSelectBenefit: (id: string, title: string) => void;
   /** Tocar el tab "Sugerencias" mientras esta vacio (sin chatFilter) abre el chat con el saludo especial - ver MiaHome.tsx. */
   onOpenSuggestionsChat: () => void;
+  /** Sube cada vez que se toca "Ver en Sugerencias" dentro del chat (ver MiaHome.tsx) - cambia el tab activo a "Sugerencias" aunque la persona haya abierto el chat desde otro tab (bug reportado: el link cerraba el chat pero dejaba "Mis Beneficios" en pantalla, no mostraba el resultado). */
+  goToSuggestionsSignal?: number;
   refreshKey: number;
 }) {
   const [tab, setTab] = useState<Tab>("conectados");
   const [connectedCards, setConnectedCards] = useState<GridCard[] | null>(null);
   const [categories, setCategories] = useState<CategoryOption[] | null>(null);
   const [filter, setFilter] = useState<Filter>({ kind: "preferidos" });
+
+  const isFirstGoToSuggestions = useRef(true);
+  useEffect(() => {
+    if (isFirstGoToSuggestions.current) {
+      isFirstGoToSuggestions.current = false;
+      return;
+    }
+    setTab("sugerencias");
+  }, [goToSuggestionsSignal]);
 
   useEffect(() => {
     // Reset a "Cargando..." antes del fetch - refreshKey puede volver a
