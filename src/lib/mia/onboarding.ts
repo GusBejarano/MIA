@@ -856,7 +856,7 @@ export class OnboardingSession {
       getRating(this.userId!, benefitId),
       getProgramNamesByIds([sourceProgramId]),
       getUserProgramIds(this.userId!),
-      getBenefitLocations(benefitId, this.profile.city ?? ""),
+      getBenefitLocations(benefitId),
     ]);
     const relation = {
       programId: sourceProgramId,

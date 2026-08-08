@@ -54,12 +54,9 @@ export async function saveBenefitAction(
  * "👁️ Usuario Final" del panel admin, para que muestre el mismo boton de
  * sedes (Ver sedes (N) / +N puntos) que vera un usuario real, en vez de
  * caer siempre al "Como llegar" legacy de una sola sede. */
-export async function loadBenefitLocationsAction(
-  benefitId: string,
-  city: string
-): Promise<BenefitLocation[]> {
+export async function loadBenefitLocationsAction(benefitId: string): Promise<BenefitLocation[]> {
   await requireAdminUser();
-  return getBenefitLocations(benefitId, city);
+  return getBenefitLocations(benefitId);
 }
 
 // ============================================================

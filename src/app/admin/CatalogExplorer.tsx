@@ -147,7 +147,7 @@ export default function CatalogExplorer({
     if (!selected) return;
     setLoadingPreview(true);
     try {
-      const sedes = await loadBenefitLocationsAction(selected.id, city);
+      const sedes = await loadBenefitLocationsAction(selected.id);
       setPreviewSedes(sedes);
     } catch {
       setPreviewSedes([]);

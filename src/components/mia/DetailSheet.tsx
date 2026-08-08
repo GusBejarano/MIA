@@ -320,7 +320,7 @@ export default function DetailSheet({
                     className="flex items-center justify-between rounded-lg bg-white px-2.5 py-2 text-xs"
                   >
                     <span className="font-semibold text-mia-ink">
-                      Sede {i + 1}
+                      {s.name || `Sede ${i + 1}`}
                       {userPosition && s.lat != null && s.lng != null && (
                         <>
                           {" "}

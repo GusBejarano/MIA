@@ -261,16 +261,20 @@ export async function getBenefitsForCategory(
 
 export type BenefitLocation = {
   id: string;
+  name: string | null;
   mapsUrl: string;
   lat: number | null;
   lng: number | null;
 };
 
 /**
- * Sedes de un beneficio puntual, acotadas a la ciudad del usuario (mismo
- * patron que getBenefitsForCategory: resolve_city_scope + .overlaps() sobre
- * la columna _list generada) - un beneficio que cubre varias ciudades a la
- * vez (ej. Kosta Azul) solo devuelve las sedes de la ciudad actual, no todas.
+ * Todas las sedes vinculadas a un beneficio puntual, sin importar la ciudad
+ * (bug reportado: una sede real y geolocalizada en Jamundi quedaba invisible
+ * en el detalle porque antes se filtraba por profile.city - "cali" - y el
+ * texto de la pantalla ya prometia "todas las sedes a nivel nacional" sin
+ * cumplirlo). El cliente (DetailSheet.tsx) ya ordena por distancia real y
+ * colapsa el resto bajo "+N mas sedes" - mismo criterio sin filtro de ciudad
+ * que ya usa getNearbyConnectedBenefits para "Cerca de ti".
  *
  * Lee por benefit_location_links (Admin v2.0, comercio compartido entre
  * benefactores) - NO por benefit_locations.benefit_id directo (columna
@@ -281,10 +285,7 @@ export type BenefitLocation = {
  * benefits (how_to_get_there) cuando sedes viene vacio, sin cambio de
  * comportamiento para el catalogo no migrado.
  */
-export async function getBenefitLocations(
-  benefitId: string,
-  city: string
-): Promise<BenefitLocation[]> {
+export async function getBenefitLocations(benefitId: string): Promise<BenefitLocation[]> {
   const { data: linkRows, error: linkError } = await supabase
     .from("benefit_location_links")
     .select("location_id")
@@ -295,24 +296,17 @@ export async function getBenefitLocations(
   const locationIds = (linkRows ?? []).map((r) => r.location_id as string);
   if (locationIds.length === 0) return [];
 
-  const { data: scopeKeys, error: scopeError } = await supabase.rpc("resolve_city_scope", {
-    target_city: city,
-  });
-  if (scopeError) {
-    throw new Error(`No se pudo resolver el alcance de la ciudad: ${scopeError.message}`);
-  }
-
   const { data, error } = await supabase
     .from("benefit_locations")
-    .select("id, maps_url, lat, lng")
-    .in("id", locationIds)
-    .overlaps("city_list", (scopeKeys ?? []) as string[]);
+    .select("id, name, maps_url, lat, lng")
+    .in("id", locationIds);
   if (error) {
     throw new Error(`No se pudieron consultar las sedes: ${error.message}`);
   }
 
   return (data ?? []).map((row) => ({
     id: row.id as string,
+    name: (row.name as string) ?? null,
     mapsUrl: row.maps_url as string,
     lat: (row.lat as number) ?? null,
     lng: (row.lng as number) ?? null,
