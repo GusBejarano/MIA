@@ -42,3 +42,17 @@ export function haversineKm(lat1: number, lng1: number, lat2: number, lng2: numb
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
+
+/** Nombre de ciudad a partir de lat/lng (BigDataCloud, gratis, sin API key) - extraida de MiaChat.tsx para reusarla desde ChatPanel.tsx. */
+export async function reverseGeocodeCity(lat: number, lon: number): Promise<string | undefined> {
+  try {
+    const res = await fetch(
+      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=es`
+    );
+    if (!res.ok) return undefined;
+    const data = await res.json();
+    return data.city || data.locality || undefined;
+  } catch {
+    return undefined;
+  }
+}

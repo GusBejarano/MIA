@@ -1,5 +1,5 @@
-import MiaChat from "@/components/MiaChat";
+import MiaHome from "@/components/mia-home/MiaHome";
 
 export default function Home() {
-  return <MiaChat />;
+  return <MiaHome />;
 }

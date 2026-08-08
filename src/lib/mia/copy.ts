@@ -18,3 +18,12 @@ export const RELACION_ACTIVA_DEFINITION =
 export const NAV_BACK_TO_CITY_CHOICE = "__back_to_city_choice__";
 export const NAV_BACK_TO_BENEFACTOR_SELECT = "__back_to_benefactor_select__";
 export const NAV_BACK_TO_CATEGORY_SELECT = "__back_to_category_select__";
+
+// Home nuevo (dev 2.5) - tab "Cerca de ti". Tono informativo, sin lenguaje
+// de "desbloquear" ni iconos de candado (ver prompt del ajuste): el nivel
+// de madurez es descriptivo, no una recompensa.
+export const NEARBY_HABITUAL_GATE_MESSAGE =
+  "Ver estos descuentos directamente en el mapa se activa cuando pases a nivel Habitual.";
+
+export const NEARBY_EMPTY_STATE_MESSAGE =
+  "Todavía no tenemos sedes ubicadas para tus benefactores conectados en esta zona. Estamos sumando más sedes al mapa.";

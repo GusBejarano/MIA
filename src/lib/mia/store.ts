@@ -576,3 +576,138 @@ export async function saveProfileFieldValue(userId: string, fieldKey: string, va
     throw new Error(`No se pudo guardar ${fieldKey}: ${error.message}`);
   }
 }
+
+// ------------------------------------------------------------
+// Onboarding v2 (dev 2.5) - avatar, conexiones con tipo de relacion,
+// ciudades de interes. Ver supabase/2026.08.07-mia_dev25_onboarding_v2.sql.
+// ------------------------------------------------------------
+
+export type AvatarKey = "negro" | "verde" | "fucsia";
+
+export type UserProfileDetails = {
+  name: string | null;
+  gender: string | null;
+  birthDate: string | null;
+  whatsappNumber: string | null;
+  avatar: AvatarKey;
+};
+
+/** Datos de "Mi perfil" (avatar, campos de aprendizaje de perfil, whatsapp solo-lectura). */
+export async function getUserProfileDetails(userId: string): Promise<UserProfileDetails> {
+  const { data, error } = await supabase
+    .from("users")
+    .select("name, gender, birth_date, whatsapp_number, avatar")
+    .eq("id", userId)
+    .single();
+  if (error) {
+    throw new Error(`No se pudo leer el perfil: ${error.message}`);
+  }
+  return {
+    name: (data?.name as string | null) ?? null,
+    gender: (data?.gender as string | null) ?? null,
+    birthDate: (data?.birth_date as string | null) ?? null,
+    whatsappNumber: (data?.whatsapp_number as string | null) ?? null,
+    avatar: ((data?.avatar as AvatarKey | null) ?? "negro") as AvatarKey,
+  };
+}
+
+export async function saveAvatar(userId: string, avatar: AvatarKey) {
+  const { error } = await supabase.from("users").update({ avatar }).eq("id", userId);
+  if (error) {
+    throw new Error(`No se pudo guardar el avatar: ${error.message}`);
+  }
+}
+
+export type RelationType = "afiliado" | "empleado" | "beneficiario" | "estudiante";
+
+export type UserConnection = {
+  programId: string;
+  tipoRelacion: RelationType | null;
+  esPrincipal: boolean;
+  verificado: boolean;
+  connectedAt: string | null;
+};
+
+/**
+ * Conecta (o actualiza) un benefactor para el usuario, con su tipo de
+ * relacion. Si `esPrincipal` es true, desmarca cualquier otra conexion
+ * principal del mismo usuario de forma atomica via el RPC
+ * set_principal_connection - dos UPDATE sueltos por REST no serian
+ * atomicos entre si (ver comentario en la migracion SQL).
+ */
+export async function saveUserConnection(
+  userId: string,
+  programId: string,
+  tipoRelacion: RelationType,
+  esPrincipal: boolean
+) {
+  const { error } = await supabase.from("user_programs").upsert(
+    {
+      user_id: userId,
+      program_id: programId,
+      tipo_relacion: tipoRelacion,
+      connected_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id,program_id" }
+  );
+  if (error) {
+    throw new Error(`No se pudo guardar la conexion: ${error.message}`);
+  }
+
+  if (esPrincipal) {
+    const { error: rpcError } = await supabase.rpc("set_principal_connection", {
+      p_user_id: userId,
+      p_program_id: programId,
+    });
+    if (rpcError) {
+      throw new Error(`No se pudo marcar la conexion principal: ${rpcError.message}`);
+    }
+  }
+}
+
+/** Conexiones (benefactores) del usuario, con tipo de relacion y cual es la principal. */
+export async function getUserConnections(userId: string): Promise<UserConnection[]> {
+  const { data, error } = await supabase
+    .from("user_programs")
+    .select("program_id, tipo_relacion, es_principal, verificado, connected_at")
+    .eq("user_id", userId);
+  if (error) {
+    throw new Error(`No se pudieron leer las conexiones: ${error.message}`);
+  }
+  return (data ?? []).map((row) => ({
+    programId: row.program_id as string,
+    tipoRelacion: (row.tipo_relacion as RelationType | null) ?? null,
+    esPrincipal: Boolean(row.es_principal),
+    verificado: Boolean(row.verificado),
+    connectedAt: (row.connected_at as string | null) ?? null,
+  }));
+}
+
+/**
+ * Agrega ciudades de interes del usuario (OnB-3 y "Mis conexiones") - solo
+ * agrega, nunca borra: el prototipo solo ofrece "+ agregar ciudad", no
+ * quitar. Duplicados se ignoran en silencio (unique user_id,city).
+ */
+export async function saveUserCities(userId: string, cities: string[]) {
+  if (cities.length === 0) return;
+
+  const rows = cities.map((city) => ({ user_id: userId, city }));
+  const { error } = await supabase
+    .from("user_cities")
+    .upsert(rows, { onConflict: "user_id,city", ignoreDuplicates: true });
+  if (error) {
+    throw new Error(`No se pudieron guardar las ciudades: ${error.message}`);
+  }
+}
+
+/** Ciudades de interes declaradas por el usuario (independiente de su ubicacion real del dispositivo). */
+export async function getUserCities(userId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("user_cities")
+    .select("city")
+    .eq("user_id", userId);
+  if (error) {
+    throw new Error(`No se pudieron leer las ciudades del usuario: ${error.message}`);
+  }
+  return (data ?? []).map((row) => row.city as string);
+}

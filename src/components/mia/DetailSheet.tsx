@@ -5,6 +5,7 @@ import type { DetailSheetMessage } from "@/lib/mia/uiMessages";
 import RatingStars from "@/components/mia/RatingStars";
 import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
 import InfoTooltip from "@/components/mia/InfoTooltip";
+import CloseButton from "@/components/mia/CloseButton";
 import { getPosition, haversineKm } from "@/lib/mia/geolocationClient";
 
 // A partir de este numero de sedes, el boton dice "Disponible en +N puntos"
@@ -172,14 +173,9 @@ export default function DetailSheet({
       />
       <div className="relative z-10 max-h-[85vh] w-full overflow-y-auto rounded-t-3xl bg-white sm:max-w-sm sm:rounded-3xl">
         <div className="mx-auto mt-2.5 h-1 w-9 rounded-full bg-zinc-200 sm:hidden" />
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Cerrar"
-          className="absolute right-4 top-4 flex h-7 w-7 items-center justify-center rounded-full bg-zinc-100 text-sm text-zinc-500"
-        >
-          ✕
-        </button>
+        <div className="absolute right-4 top-4">
+          <CloseButton onClick={onClose} variant="floating" />
+        </div>
 
         <div className="mx-4 mt-4">
           <BenefitThumbnail

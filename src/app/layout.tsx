@@ -13,6 +13,15 @@ export const metadata: Metadata = {
   title: "mia — Descuentos Inteligentes",
   description:
     "MIA te muestra los descuentos que de verdad te sirven, sin perder tiempo revisando cientos de promociones.",
+  // Sin esto, iOS Safari no tiene ningun <link rel="apple-touch-icon">
+  // (icon.png de src/app solo genera el <link rel="icon"> generico que usa
+  // Chrome/Android) - "Agregar a inicio" en iOS cae de vuelta a una captura
+  // de pantalla de la app como icono en vez del logo de MIA, que es lo que
+  // se reportaba como "no funciono" en iOS (Android si mostraba el icono
+  // bien porque el manifest.ts si trae uno).
+  icons: {
+    apple: "/logo/mia-icon.png",
+  },
   // Nombre corto bajo el icono al "Agregar a inicio" en iOS - sin esto,
   // Safari usa el <title> completo de arriba y lo trunca ("mia — Descu...").
   // No afecta el titulo de la pestana del navegador, solo este caso.

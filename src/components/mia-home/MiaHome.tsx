@@ -1,0 +1,249 @@
+"use client";
+
+import Image from "next/image";
+import { useEffect, useState } from "react";
+import { callMia, claimVisit } from "@/lib/mia/apiClient";
+import OnboardingConnect from "@/components/mia-home/OnboardingConnect";
+import OnboardingCities from "@/components/mia-home/OnboardingCities";
+import HomeTabs, { type ChatFilter } from "@/components/mia-home/HomeTabs";
+import ChatOverlay, { type ChatBootstrap } from "@/components/mia-home/ChatOverlay";
+import ConnectionsSheet from "@/components/mia-home/ConnectionsSheet";
+import ProfileSheet from "@/components/mia-home/ProfileSheet";
+import type { GridCard } from "@/components/mia-home/BenefitGrid";
+
+type Step = "welcome" | "connect" | "cities" | "tabs";
+
+// Recuerda phone+userId de este dispositivo (dev 2.5) - a diferencia de
+// REMEMBERED_PHONE_KEY (MiaChat.tsx, solo precarga el input), esto salta
+// directo a los tabs en un regreso: OnB-1/2/3 no vuelven a mostrarse.
+const REMEMBERED_USER_KEY = "mia_home_user";
+
+function getRememberedUser(): { phone: string; userId: string } | null {
+  try {
+    const raw = window.localStorage.getItem(REMEMBERED_USER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberUser(phone: string, userId: string) {
+  window.localStorage.setItem(REMEMBERED_USER_KEY, JSON.stringify({ phone, userId }));
+}
+
+/**
+ * Shell nuevo del home (dev 2.5) - onboarding de 4 pasos + tabs de retorno.
+ * No toca OnboardingSession/freeChat/api/mia: el chat sigue siendo el mismo
+ * motor de siempre, montado aparte (ChatOverlay -> ChatPanel) y arrancado
+ * en segundo plano al entrar a los tabs para no retrasar session_started
+ * hasta que la persona toque el boton flotante.
+ */
+export default function MiaHome() {
+  const [step, setStep] = useState<Step>("welcome");
+  const [nameInput, setNameInput] = useState("");
+  const [phoneInput, setPhoneInput] = useState("");
+  const [phone, setPhone] = useState("");
+  const [userId, setUserId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [chatBootstrap, setChatBootstrap] = useState<ChatBootstrap | null>(null);
+  const [chatOverlayOpen, setChatOverlayOpen] = useState(false);
+  const [chatFilter, setChatFilter] = useState<ChatFilter | null>(null);
+  const [pendingDetail, setPendingDetail] = useState<{ id: string; title: string } | null>(null);
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/health").catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const remembered = getRememberedUser();
+    if (remembered) {
+      // Lectura de localStorage solo es posible despues del primer render
+      // (el HTML del servidor nunca conoce el valor guardado en ESE
+      // navegador) - mismo patron que el telefono recordado en
+      // MiaChat.tsx, aqui con 3 campos en vez de 1.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPhone(remembered.phone);
+      setUserId(remembered.userId);
+      setStep("tabs");
+    }
+  }, []);
+
+  // Bootstrap del chat en segundo plano al entrar a los tabs - un solo
+  // session_started por visita, sin importar si la persona llega ahi por
+  // onboarding nuevo o por ser un regreso (ver claimVisit en apiClient.ts).
+  useEffect(() => {
+    if (step !== "tabs" || !phone || chatBootstrap) return;
+    callMia({ phone, logVisit: claimVisit() })
+      .then(({ reply, ui, navLinks, state }) => setChatBootstrap({ reply, ui, navLinks, state }))
+      .catch((err) => console.error("No se pudo arrancar el chat en segundo plano:", err));
+  }, [step, phone, chatBootstrap]);
+
+  async function handleWelcomeSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmedPhone = phoneInput.trim();
+    const trimmedName = nameInput.trim();
+    if (!trimmedPhone || !trimmedName || loading) return;
+
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/mia/onboarding/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: trimmedPhone, name: trimmedName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Algo salió mal");
+      setPhone(trimmedPhone);
+      setUserId(data.userId);
+      setStep("connect");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Algo salió mal");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function finishOnboarding() {
+    if (userId) rememberUser(phone, userId);
+    setStep("tabs");
+  }
+
+  function handleSelectBenefit(id: string, title: string) {
+    setPendingDetail({ id, title });
+    setChatOverlayOpen(true);
+  }
+
+  function handleCardCarouselResult(
+    carousel: { cards: { id: string; title: string; tag: string; thumbUrl: string | null }[] },
+    queryLabel: string
+  ) {
+    const cards: GridCard[] = carousel.cards.map((c) => ({
+      id: c.id,
+      title: c.title,
+      tag: c.tag,
+      thumbUrl: c.thumbUrl,
+    }));
+    setChatFilter({ label: queryLabel, cards });
+  }
+
+  if (step === "welcome") {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center bg-white px-6">
+        <main className="flex w-full max-w-xl flex-col items-center gap-6 text-center">
+          <Image
+            src="/logo/mia-logo.png"
+            alt="mia"
+            width={480}
+            height={188}
+            priority
+            className="h-auto w-72 sm:w-80"
+          />
+          <p className="-mt-4 text-sm text-zinc-400">by Descuentos Inteligentes</p>
+          <p className="max-[380px]:text-xl text-2xl font-semibold leading-snug text-mia-ink">
+            ¿Sabías que existen descuentos esperando por ti?
+          </p>
+          <p className="max-w-md text-lg leading-8 text-zinc-600">
+            MIA te ayuda a encontrarlos y usarlos, donde y cuando los necesitas.
+          </p>
+
+          <form onSubmit={handleWelcomeSubmit} className="mt-2 flex w-full max-w-sm flex-col gap-3">
+            <input
+              type="text"
+              placeholder="Tu nombre"
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              className="w-full rounded-full border border-zinc-200 px-5 py-3 text-center text-base text-mia-ink outline-none focus:border-mia-violet"
+            />
+            <input
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="+57 300 000 0000"
+              value={phoneInput}
+              onChange={(e) => setPhoneInput(e.target.value)}
+              className="w-full rounded-full border border-zinc-200 px-5 py-3 text-center text-base text-mia-ink outline-none focus:border-mia-violet"
+            />
+            <button
+              type="submit"
+              disabled={loading || !phoneInput.trim() || !nameInput.trim()}
+              className="w-full rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-5 py-3 text-base font-semibold text-white transition-opacity disabled:opacity-50"
+            >
+              {loading ? "Conectando..." : "Empezar a chatear"}
+            </button>
+          </form>
+
+          {error && <p className="text-sm text-red-500">{error}</p>}
+
+          <p className="text-xs text-zinc-400">
+            Tu número solo se usa para reconocerte entre visitas - nunca se comparte
+          </p>
+        </main>
+      </div>
+    );
+  }
+
+  if (!userId) return null;
+
+  if (step === "connect") {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center bg-white px-6 py-8">
+        <OnboardingConnect userId={userId} onContinue={() => setStep("cities")} />
+      </div>
+    );
+  }
+
+  if (step === "cities") {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center bg-white px-6 py-8">
+        <OnboardingCities userId={userId} onContinue={finishOnboarding} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-dvh flex-col bg-white">
+      <header className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setConnectionsOpen(true)}
+          className="flex flex-1 items-center gap-1.5 rounded-full bg-zinc-100 px-3 py-1.5 text-left text-sm font-medium text-mia-ink"
+        >
+          Mis conexiones
+        </button>
+        <button
+          type="button"
+          onClick={() => setProfileOpen(true)}
+          aria-label="Mi perfil"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-mia-ink text-xs font-bold text-white"
+        >
+          <Image src="/logo/mia-icon.png" alt="" width={18} height={18} className="h-4.5 w-4.5" />
+        </button>
+      </header>
+
+      <HomeTabs
+        userId={userId}
+        chatFilter={chatFilter}
+        onClearChatFilter={() => setChatFilter(null)}
+        onSelectBenefit={handleSelectBenefit}
+      />
+
+      <ChatOverlay
+        phone={phone}
+        bootstrap={chatBootstrap}
+        isOpen={chatOverlayOpen}
+        onOpenChange={setChatOverlayOpen}
+        autoOpenDetail={pendingDetail}
+        onAutoOpenDetailConsumed={() => setPendingDetail(null)}
+        onCardCarouselResult={handleCardCarouselResult}
+      />
+
+      {connectionsOpen && <ConnectionsSheet userId={userId} onClose={() => setConnectionsOpen(false)} />}
+      {profileOpen && <ProfileSheet userId={userId} onClose={() => setProfileOpen(false)} />}
+    </div>
+  );
+}

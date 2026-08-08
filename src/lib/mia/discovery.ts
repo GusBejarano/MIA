@@ -55,6 +55,27 @@ export async function getAvailableBenefactors(city: string): Promise<BenefactorO
     .sort((a, b) => b.count - a.count);
 }
 
+export type ProgramOption = { id: string; name: string; color: string };
+
+/**
+ * Todos los benefactores del catalogo, sin filtrar por ciudad - a
+ * diferencia de getAvailableBenefactors (que exige una ciudad porque
+ * cuenta beneficios ahi), OnB-2 conecta un benefactor como afiliacion de
+ * la persona, no como filtro geografico: `programs` no tiene columna de
+ * ciudad.
+ */
+export async function getAllPrograms(): Promise<ProgramOption[]> {
+  const { data, error } = await supabase.from("programs").select("id, name").order("name");
+  if (error) {
+    throw new Error(`No se pudieron consultar los benefactores: ${error.message}`);
+  }
+  return (data ?? []).map((p) => ({
+    id: p.id as string,
+    name: p.name as string,
+    color: colorForId(p.id as string),
+  }));
+}
+
 export type CityOption = {
   /** normalizada (minusculas, trim) - se usa como identificador para filtrar */
   value: string;
@@ -325,6 +346,146 @@ function startOfTodayBogotaISO(): string {
       bogotaShifted.getUTCDate()
     ) + BOGOTA_OFFSET_MS;
   return new Date(startUtcMs).toISOString();
+}
+
+// ------------------------------------------------------------
+// Onboarding v2 (dev 2.5) - tabs Conectados / Cerca de ti del home nuevo.
+// ------------------------------------------------------------
+
+/**
+ * Beneficios de los benefactores conectados del usuario, en cualquiera de
+ * sus ciudades de interes (union, no interseccion) - tab "Conectados". Sin
+ * filtro de categoria, a diferencia de getBenefitsForCategory. Si
+ * cityValues viene vacio (usuario nunca paso por OnB-3) devuelve [] en vez
+ * de traer beneficios de cualquier ciudad - ninguna pantalla debe asumir
+ * cobertura sin que el usuario haya elegido al menos una ciudad.
+ */
+export async function getConnectedBenefits(
+  programIds: string[],
+  cityValues: string[]
+): Promise<BenefitCard[]> {
+  if (programIds.length === 0 || cityValues.length === 0) return [];
+
+  const scopeKeysByCity = await Promise.all(
+    cityValues.map((city) => supabase.rpc("resolve_city_scope", { target_city: city }))
+  );
+  const scopeError = scopeKeysByCity.find((r) => r.error)?.error;
+  if (scopeError) {
+    throw new Error(`No se pudo resolver el alcance de las ciudades: ${scopeError.message}`);
+  }
+  const scopeKeys = [
+    ...new Set(scopeKeysByCity.flatMap((r) => (r.data ?? []) as string[])),
+  ];
+
+  const { data, error } = await supabase
+    .from("benefits")
+    .select("id, title, source_program_id, image_url")
+    .eq("status", "activo")
+    .in("source_program_id", programIds)
+    .overlaps("city_list", scopeKeys);
+  if (error) {
+    throw new Error(`No se pudieron consultar los beneficios conectados: ${error.message}`);
+  }
+
+  const { data: programRows, error: programsError } = await supabase
+    .from("programs")
+    .select("id, name")
+    .in("id", programIds);
+  if (programsError) {
+    throw new Error(`No se pudieron resolver los programas: ${programsError.message}`);
+  }
+  const nameById = new Map((programRows ?? []).map((p) => [p.id as string, p.name as string]));
+
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    title: row.title as string,
+    tag: nameById.get(row.source_program_id as string) ?? "",
+    sourceProgram: nameById.get(row.source_program_id as string) ?? "",
+    thumbUrl: (row.image_url as string) ?? null,
+  }));
+}
+
+export type NearbyBenefitCard = BenefitCard & { lat: number; lng: number };
+
+/**
+ * Beneficios de los benefactores conectados que tienen al menos una sede
+ * geolocalizada (lat/lng no nulos) via benefit_location_links - tab "Cerca
+ * de ti". No calcula distancia aqui - devuelve las coordenadas y el
+ * cliente ordena con haversineKm (geolocationClient.ts) contra la posicion
+ * del dispositivo, mismo patron que ya usa DetailSheet.tsx para ordenar
+ * sedes por cercania. Beneficios sin coordenadas reales se excluyen del
+ * todo (nunca se devuelven al final sin distancia real). Si un beneficio
+ * tiene varias sedes, usa la primera con coordenadas.
+ */
+export async function getNearbyConnectedBenefits(
+  programIds: string[]
+): Promise<NearbyBenefitCard[]> {
+  if (programIds.length === 0) return [];
+
+  const { data: linkRows, error: linkError } = await supabase
+    .from("benefit_location_links")
+    .select("benefit_id, location_id");
+  if (linkError) {
+    throw new Error(`No se pudieron consultar los vínculos de sedes: ${linkError.message}`);
+  }
+  if (!linkRows || linkRows.length === 0) return [];
+
+  const locationIds = [...new Set(linkRows.map((r) => r.location_id as string))];
+  const { data: locationRows, error: locationError } = await supabase
+    .from("benefit_locations")
+    .select("id, lat, lng")
+    .in("id", locationIds)
+    .not("lat", "is", null)
+    .not("lng", "is", null);
+  if (locationError) {
+    throw new Error(`No se pudieron consultar las sedes: ${locationError.message}`);
+  }
+  const coordsByLocationId = new Map(
+    (locationRows ?? []).map((r) => [r.id as string, { lat: r.lat as number, lng: r.lng as number }])
+  );
+  if (coordsByLocationId.size === 0) return [];
+
+  const coordsByBenefit = new Map<string, { lat: number; lng: number }>();
+  for (const link of linkRows) {
+    const benefitId = link.benefit_id as string;
+    if (coordsByBenefit.has(benefitId)) continue;
+    const coords = coordsByLocationId.get(link.location_id as string);
+    if (coords) coordsByBenefit.set(benefitId, coords);
+  }
+  if (coordsByBenefit.size === 0) return [];
+
+  const { data: benefitRows, error: benefitsError } = await supabase
+    .from("benefits")
+    .select("id, title, source_program_id, image_url")
+    .eq("status", "activo")
+    .in("source_program_id", programIds)
+    .in("id", [...coordsByBenefit.keys()]);
+  if (benefitsError) {
+    throw new Error(`No se pudieron consultar los beneficios cercanos: ${benefitsError.message}`);
+  }
+  if (!benefitRows || benefitRows.length === 0) return [];
+
+  const { data: programRows, error: programsError } = await supabase
+    .from("programs")
+    .select("id, name")
+    .in("id", programIds);
+  if (programsError) {
+    throw new Error(`No se pudieron resolver los programas: ${programsError.message}`);
+  }
+  const nameById = new Map((programRows ?? []).map((p) => [p.id as string, p.name as string]));
+
+  return benefitRows.map((row) => {
+    const coords = coordsByBenefit.get(row.id as string)!;
+    return {
+      id: row.id as string,
+      title: row.title as string,
+      tag: nameById.get(row.source_program_id as string) ?? "",
+      sourceProgram: nameById.get(row.source_program_id as string) ?? "",
+      thumbUrl: (row.image_url as string) ?? null,
+      lat: coords.lat,
+      lng: coords.lng,
+    };
+  });
 }
 
 /** Cuantos beneficios distintos ha visto en detalle hoy (horario Colombia). */
