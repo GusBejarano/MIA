@@ -7,6 +7,8 @@ import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
 import InfoTooltip from "@/components/mia/InfoTooltip";
 import CloseButton from "@/components/mia/CloseButton";
 import { getPosition, haversineKm } from "@/lib/mia/geolocationClient";
+import RelationTypeSelect from "@/components/mia-home/RelationTypeSelect";
+import type { RelationType } from "@/lib/mia/store";
 
 // A partir de este numero de sedes, el boton dice "Disponible en +N puntos"
 // en vez de "Ver sedes (N)" - valor inicial razonable, facil de ajustar,
@@ -45,6 +47,7 @@ export default function DetailSheet({
   const [rating, setRating] = useState(message.rating);
   const [hasRelation, setHasRelation] = useState(message.relation.hasRelation);
   const [declaring, setDeclaring] = useState(false);
+  const [showRelationSelect, setShowRelationSelect] = useState(false);
 
   // Sedes (Fase 3, v2.0) - ausente/0/1 sede no cambia nada de lo de abajo.
   const sedes = useMemo(() => message.sedes ?? [], [message.sedes]);
@@ -91,17 +94,28 @@ export default function DetailSheet({
     }
   }
 
-  async function handleDeclareRelation() {
+  /**
+   * Guarda la relacion con el tipo elegido (mismo endpoint y mismos datos
+   * que "Mis Conexiones"/OnboardingConnect.tsx: tipo_relacion + connected_at
+   * en BD) - antes solo insertaba la fila puente sin tipo de relacion
+   * (bug reportado: quedaba incompleta comparada con "Mis Conexiones").
+   * esPrincipal se omite a proposito (queda false, igual que
+   * OnboardingConnect.tsx): declarar una relacion desde el detalle de un
+   * beneficio puntual no debe pisar en silencio cual es el benefactor
+   * principal del usuario, eso se decide explicitamente en "Mis Conexiones".
+   */
+  async function handleDeclareRelation(relation: RelationType) {
     if (!userId || declaring) return;
     setDeclaring(true);
     try {
-      const res = await fetch("/api/mia/declare-relation", {
+      const res = await fetch("/api/mia/onboarding/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, programId: message.relation.programId }),
+        body: JSON.stringify({ userId, programId: message.relation.programId, tipoRelacion: relation }),
       });
       if (!res.ok) throw new Error("No se pudo declarar la relacion");
       setHasRelation(true);
+      setShowRelationSelect(false);
     } catch (err) {
       console.error("No se pudo declarar la relacion:", err);
     } finally {
@@ -220,17 +234,23 @@ export default function DetailSheet({
             </div>
           )}
 
-          {!hasRelation && (
+          {!hasRelation && !showRelationSelect && (
             <button
               type="button"
-              onClick={handleDeclareRelation}
-              disabled={declaring}
-              className="mt-3 w-full rounded-2xl border border-dashed border-mia-violet/40 bg-mia-violet/5 px-3 py-2.5 text-center text-xs font-bold text-mia-violet disabled:opacity-50"
+              onClick={() => setShowRelationSelect(true)}
+              className="mt-3 w-full rounded-2xl border border-dashed border-mia-violet/40 bg-mia-violet/5 px-3 py-2.5 text-center text-xs font-bold text-mia-violet"
             >
-              {declaring
-                ? "Guardando..."
-                : `Toca si tienes una relación activa con ${message.relation.programName}`}
+              {`Toca si tienes una relación activa con ${message.relation.programName}`}
             </button>
+          )}
+
+          {!hasRelation && showRelationSelect && (
+            <div className="mt-3 rounded-2xl border border-dashed border-mia-violet/40 bg-mia-violet/5 p-3">
+              <p className="mb-2 text-xs font-semibold text-mia-ink">
+                ¿Qué tipo de relación tienes con {message.relation.programName}?
+              </p>
+              <RelationTypeSelect onConfirm={handleDeclareRelation} busy={declaring} />
+            </div>
           )}
 
           {message.details.map((d, i) => (

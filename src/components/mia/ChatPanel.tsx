@@ -147,7 +147,9 @@ export default function ChatPanel({
   initialState,
   initialReply,
   greetingOverride,
+  suggestionsOnly,
   onCardCarouselResult,
+  onGoToSuggestions,
   onRatingChanged,
 }: {
   phone: string;
@@ -155,8 +157,12 @@ export default function ChatPanel({
   initialReply: { reply: string; ui: UiMessage[]; navLinks?: NavLink[] };
   /** Home nuevo (dev 2.5): reemplaza SOLO el texto del primer mensaje (el saludo especial del tab "Sugerencias" vacío, ver copy.ts) - la sesion real detras (initialState/history) sigue siendo la misma, esto es puramente de despliegue visual. */
   greetingOverride?: string;
+  /** Home nuevo (dev 2.5): mientras este activo, CUALQUIER mensaje libre busca en el 100% del catalogo (getSuggestions, ver onboarding.ts) sin pasar por navegacion de benefactor/ciudad/categoria - y un card_carousel de respuesta no se dibuja como carrusel inline, se ve como un link "Ver en Sugerencias" (ver onGoToSuggestions). Tambien oculta los chips del primer mensaje (el saludo especial no debe invitar a navegar benefactores). */
+  suggestionsOnly?: boolean;
   /** Home nuevo (dev 2.5): cuando una respuesta de MIA trae un card_carousel, se refleja como filtro (removible, solo de esta sesion) en el tab Sugerencias - ver HomeTabs.tsx. */
   onCardCarouselResult?: (carousel: CardCarouselMessage, queryLabel: string) => void;
+  /** Home nuevo (dev 2.5): tap en "Ver en Sugerencias" (solo con suggestionsOnly) - cierra el chat, el tab de abajo ya quedo actualizado via onCardCarouselResult. */
+  onGoToSuggestions?: () => void;
   /** Home nuevo (dev 2.5): se lo pasa tal cual a DetailSheet - ver su prop del mismo nombre. */
   onRatingChanged?: () => void;
 }) {
@@ -166,7 +172,9 @@ export default function ChatPanel({
       id: nextMessageId++,
       role: "assistant",
       text: greetingOverride ?? initialReply.reply,
-      ui: initialReply.ui,
+      // Sin chips en el saludo especial: no debe invitar a navegar
+      // benefactores/categorias, solo a escribir la pregunta libre.
+      ui: greetingOverride !== undefined ? [] : initialReply.ui,
       navLinks: initialReply.navLinks,
     },
   ]);
@@ -201,6 +209,7 @@ export default function ChatPanel({
         phone,
         message,
         state: sessionState,
+        ...(suggestionsOnly ? { suggestionsOnly: true } : {}),
         ...extra,
       });
       setSessionState(state);
@@ -332,9 +341,18 @@ export default function ChatPanel({
                     />
                   )}
                   {block.type === "summary_cards" && <SummaryCards message={block} />}
-                  {block.type === "card_carousel" && (
-                    <BenefitCarousel message={block} onSelect={handleCardSelect} />
-                  )}
+                  {block.type === "card_carousel" &&
+                    (suggestionsOnly ? (
+                      <button
+                        type="button"
+                        onClick={onGoToSuggestions}
+                        className="inline-flex items-center gap-1 rounded-full border border-mia-violet/30 bg-[#F3E8FE] px-3 py-1.5 text-xs font-bold text-mia-violet"
+                      >
+                        Ver en Sugerencias ↗
+                      </button>
+                    ) : (
+                      <BenefitCarousel message={block} onSelect={handleCardSelect} />
+                    ))}
                   {block.type === "tip" && <Tip message={block} />}
                 </div>
               ))}

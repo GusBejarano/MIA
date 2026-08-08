@@ -54,14 +54,12 @@ export default function MiaHome() {
 
   const [chatBootstrap, setChatBootstrap] = useState<ChatBootstrap | null>(null);
   const [chatOverlayOpen, setChatOverlayOpen] = useState(false);
+  // true desde el primer open en adelante, sin importar si fue el boton
+  // flotante o "Sugerencias" vacio - ver hasOpenedOnce en ChatOverlay.tsx
+  // (continuidad real de la conversacion al reabrir).
+  const [chatHasOpenedOnce, setChatHasOpenedOnce] = useState(false);
   const [chatFilter, setChatFilter] = useState<ChatFilter | null>(null);
   const [userName, setUserName] = useState<string | null>(null);
-  // Tocar "Sugerencias" vacio abre el chat con un saludo especial (ver
-  // copy.ts) - se apaga al cerrar el chat para no repetirlo si se vuelve a
-  // abrir por el boton flotante en cualquier otro momento (regla del
-  // ajuste: solo una vez por "vacio", sin logica de "primera vez" mas
-  // complicada que eso).
-  const [suggestionsGreetingPending, setSuggestionsGreetingPending] = useState(false);
   const [directDetail, setDirectDetail] = useState<DetailSheetMessage | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
@@ -244,11 +242,12 @@ export default function MiaHome() {
     setChatFilter({ label: queryLabel, cards });
   }
 
-  // Tocar el tab "Sugerencias" mientras esta vacio abre el chat con el
-  // saludo especial en vez del saludo real de produccion - ver copy.ts.
-  function handleOpenSuggestionsChat() {
-    setSuggestionsGreetingPending(true);
+  // Unico lugar que abre el chat (boton flotante via onOpenChange, o el
+  // tab "Sugerencias" vacio) - marca chatHasOpenedOnce en el mismo evento,
+  // nunca en un efecto (ver hasOpenedOnce en ChatOverlay.tsx).
+  function openChat() {
     setChatOverlayOpen(true);
+    setChatHasOpenedOnce(true);
   }
 
   if (step === "welcome") {
@@ -377,7 +376,7 @@ export default function MiaHome() {
         chatFilter={chatFilter}
         onClearChatFilter={() => setChatFilter(null)}
         onSelectBenefit={viewDetail}
-        onOpenSuggestionsChat={handleOpenSuggestionsChat}
+        onOpenSuggestionsChat={openChat}
         refreshKey={connectionsVersion}
       />
 
@@ -401,18 +400,25 @@ export default function MiaHome() {
         />
       )}
 
+      {/* El chat flotante de dev 2.5 ya no maneja navegacion de
+          benefactores/ciudad/categoria por chips (decision explicita: "ya
+          ese manejo no lo vamos a tener con MIA") - siempre en modo
+          suggestionsOnly, con el mismo saludo de busqueda libre, sin
+          importar si se abrio desde el boton flotante o desde el tab
+          "Sugerencias" vacio. ChatOverlay mantiene la conversacion
+          montada tras el primer open (continuidad real: reabrir el chat
+          ya no perdia el historial, bug reportado). */}
       <ChatOverlay
         phone={phone}
         bootstrap={chatBootstrap}
         isOpen={chatOverlayOpen}
+        hasOpenedOnce={chatHasOpenedOnce}
         onOpenChange={(open) => {
           setChatOverlayOpen(open);
-          // Se apaga al cerrar - si se reabre por el boton flotante en
-          // cualquier otro momento (no desde "Sugerencias" vacio), debe
-          // verse el saludo real, no el especial (regla del ajuste).
-          if (!open) setSuggestionsGreetingPending(false);
+          if (open) setChatHasOpenedOnce(true);
         }}
-        greetingOverride={suggestionsGreetingPending ? suggestionsChatGreeting(userName) : undefined}
+        greetingOverride={suggestionsChatGreeting(userName)}
+        suggestionsOnly
         onCardCarouselResult={handleCardCarouselResult}
         onRatingChanged={() => setConnectionsVersion((v) => v + 1)}
       />

@@ -361,6 +361,8 @@ export class OnboardingSession {
       lng?: number;
       chipSelection?: string[];
       viewDetailId?: string;
+      /** Chat abierto desde el tab "Sugerencias" vacío (dev 2.5) - CUALQUIER mensaje busca en el 100% del catalogo (resolveSuggestionQuery), sin pasar por navegacion de benefactor/ciudad/categoria. Bandera por turno (no queda guardada en el profile/sesion) para no afectar el chat normal del boton flotante, que comparte la misma sesion de fondo - ver ChatPanel.tsx. */
+      suggestionsOnly?: boolean;
     } = {}
   ): Promise<Turn> {
     // La API de Claude rechaza mensajes de usuario con contenido vacio. El
@@ -371,6 +373,10 @@ export class OnboardingSession {
 
     if (opts.viewDetailId) {
       return this.viewBenefitDetail(opts.viewDetailId);
+    }
+
+    if (opts.suggestionsOnly) {
+      return this.resolveSuggestionQuery(userMessage);
     }
 
     switch (this.stage) {

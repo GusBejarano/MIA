@@ -30,17 +30,23 @@ export default function ChatOverlay({
   phone,
   bootstrap,
   isOpen,
+  hasOpenedOnce,
   onOpenChange,
   greetingOverride,
+  suggestionsOnly,
   onCardCarouselResult,
   onRatingChanged,
 }: {
   phone: string;
   bootstrap: ChatBootstrap | null;
   isOpen: boolean;
+  /** true desde el primer open en adelante (lo controla MiaHome.tsx en el mismo evento que pone isOpen en true, sea el boton flotante o "Sugerencias" vacio) - continuidad real de la conversacion (feedback explicito: reabrir el chat volvia a arrancar de cero, sin el historial ya conversado). Una vez true, este componente se queda montado para siempre, solo oculto con CSS - mismo patron que NearbyList.tsx en HomeTabs.tsx. */
+  hasOpenedOnce: boolean;
   onOpenChange: (open: boolean) => void;
   /** Saludo especial del tab "Sugerencias" vacío - ver ChatPanel.tsx. */
   greetingOverride?: string;
+  /** Ver ChatPanel.tsx - "Ver en Sugerencias" en vez de carrusel inline, y cierra este overlay al tocarlo (onGoToSuggestions = () => onOpenChange(false), no necesita prop aparte). */
+  suggestionsOnly?: boolean;
   onCardCarouselResult?: (carousel: CardCarouselMessage, queryLabel: string) => void;
   /** Calificar un beneficio desde el detalle abierto DENTRO del chat tambien debe invalidar el cache de Conectados/Preferidos - ver DetailSheet.tsx. */
   onRatingChanged?: () => void;
@@ -57,9 +63,13 @@ export default function ChatOverlay({
         MIA
       </button>
 
-      {isOpen && (
+      {hasOpenedOnce && (
         <div
-          className="fixed inset-0 z-40 flex items-end justify-center bg-black/35 animate-[fade-in_0.15s_ease-out]"
+          className={
+            isOpen
+              ? "fixed inset-0 z-40 flex items-end justify-center bg-black/35 animate-[fade-in_0.15s_ease-out]"
+              : "hidden"
+          }
           onClick={() => onOpenChange(false)}
         >
           <div
@@ -83,7 +93,9 @@ export default function ChatOverlay({
                 initialState={bootstrap.state}
                 initialReply={{ reply: bootstrap.reply, ui: bootstrap.ui, navLinks: bootstrap.navLinks }}
                 greetingOverride={greetingOverride}
+                suggestionsOnly={suggestionsOnly}
                 onCardCarouselResult={onCardCarouselResult}
+                onGoToSuggestions={() => onOpenChange(false)}
                 onRatingChanged={onRatingChanged}
               />
             ) : (

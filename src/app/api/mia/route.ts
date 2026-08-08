@@ -30,6 +30,8 @@ type RequestBody = {
   viewDetailId?: string;
   /** false = esta visita ya registro session_started (mismo tab, solo un refresco) - ver MiaChat.tsx. Ausente/true = registrarlo. */
   logVisit?: boolean;
+  /** Chat abierto desde el tab "Sugerencias" vacío (dev 2.5) - ver OnboardingSession.handleUserMessage. */
+  suggestionsOnly?: boolean;
 };
 
 export async function POST(req: NextRequest) {
@@ -51,6 +53,7 @@ export async function POST(req: NextRequest) {
     chipSelection,
     viewDetailId,
     logVisit,
+    suggestionsOnly,
   } = body;
 
   if (!phone || typeof phone !== "string") {
@@ -87,6 +90,7 @@ export async function POST(req: NextRequest) {
         lng,
         chipSelection,
         viewDetailId,
+        suggestionsOnly,
       });
       reply = turn.reply;
       ui = turn.ui;
