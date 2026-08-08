@@ -11,6 +11,8 @@ export type GridCard = {
   connected?: boolean;
   /** Valores normalizados de categoria (category_list) - para el filtro de la fila de categorias de HomeTabs.tsx, nunca para mostrar (eso es `tag`). */
   categoryValues?: string[];
+  /** Calificacion propia (1-3) del usuario para este beneficio, 0 si nunca lo califico - para el filtro "Preferidos" de HomeTabs.tsx. */
+  rating?: number;
 };
 
 /**

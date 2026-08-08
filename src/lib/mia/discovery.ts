@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient";
 import { colorForString } from "./colorPalette";
+import { getRatingsForBenefits } from "./store";
 
 // Color de benefactor/programa deterministico por id - no podemos
 // hardcodear un color por nombre porque la lista de benefactores crece con
@@ -354,7 +355,11 @@ function startOfTodayBogotaISO(): string {
 
 export type ProgramPriority = { programId: string; prioridad: number };
 
-export type ConnectedBenefitCard = BenefitCard & { categoryValues: string[] };
+export type ConnectedBenefitCard = BenefitCard & {
+  categoryValues: string[];
+  /** Calificacion (1-3) que el propio usuario le puso a ESTE beneficio, o 0 si nunca lo califico - misma fuente que benefit_ratings/DetailSheet.tsx. Usada por el filtro "Preferidos" de HomeTabs.tsx. */
+  rating: number;
+};
 
 /**
  * Beneficios de los benefactores conectados del usuario, en cualquiera de
@@ -371,16 +376,21 @@ export type ConnectedBenefitCard = BenefitCard & { categoryValues: string[] };
  * comparar texto de `tag` contra la categoria (bug real: `tag` nunca fue la
  * categoria, el filtro no filtraba nada).
  *
- * Ordenado por la prioridad (1-3 estrellas) que el usuario le dio a cada
- * benefactor en "Mis conexiones" - mas estrellas primero (ver
- * UserConnection.prioridad en store.ts). Esto es exclusivo de este tab: NO
- * toca getBenefitsForCategory (el catalogo por categoria que tambien usa el
- * carrusel del chat de produccion), que sigue ordenando por calificacion
- * del propio beneficio, sin relacion con esto.
+ * Ordenado por dos niveles: primero la prioridad (1-3 estrellas) que el
+ * usuario le dio a cada benefactor en "Mis conexiones" (ver
+ * UserConnection.prioridad en store.ts), y dentro de un mismo benefactor,
+ * por la calificacion (1-3 estrellas) que el usuario le puso a ESE
+ * beneficio puntual (benefit_ratings, la misma que se ve en el detalle) -
+ * un beneficio que el usuario ya califico bien sube al principio de su
+ * benefactor. Esto es exclusivo de este tab: NO toca getBenefitsForCategory
+ * (el catalogo por categoria que tambien usa el carrusel del chat de
+ * produccion), que tiene su propio orden por calificacion sin relacion con
+ * esto.
  */
 export async function getConnectedBenefits(
   programPriorities: ProgramPriority[],
-  cityValues: string[]
+  cityValues: string[],
+  userId: string
 ): Promise<ConnectedBenefitCard[]> {
   if (programPriorities.length === 0 || cityValues.length === 0) return [];
   const programIds = programPriorities.map((p) => p.programId);
@@ -416,6 +426,8 @@ export async function getConnectedBenefits(
   }
   const nameById = new Map((programRows ?? []).map((p) => [p.id as string, p.name as string]));
 
+  const ownRatingByBenefitId = await getRatingsForBenefits(userId, (data ?? []).map((row) => row.id as string));
+
   const cards: ConnectedBenefitCard[] = (data ?? []).map((row) => ({
     id: row.id as string,
     title: row.title as string,
@@ -423,6 +435,7 @@ export async function getConnectedBenefits(
     sourceProgram: nameById.get(row.source_program_id as string) ?? "",
     thumbUrl: (row.image_url as string) ?? null,
     categoryValues: (row.category_list as string[] | null) ?? [],
+    rating: ownRatingByBenefitId[row.id as string] ?? 0,
   }));
   const priorityByBenefitId = new Map(
     (data ?? []).map((row) => [
@@ -430,12 +443,21 @@ export async function getConnectedBenefits(
       priorityById.get(row.source_program_id as string) ?? 1,
     ])
   );
-  return cards.sort(
-    (a, b) => (priorityByBenefitId.get(b.id) ?? 1) - (priorityByBenefitId.get(a.id) ?? 1)
-  );
+
+  return cards.sort((a, b) => {
+    const priorityDiff = (priorityByBenefitId.get(b.id) ?? 1) - (priorityByBenefitId.get(a.id) ?? 1);
+    if (priorityDiff !== 0) return priorityDiff;
+    return b.rating - a.rating;
+  });
 }
 
-export type NearbyBenefitCard = BenefitCard & { lat: number; lng: number; categoryValues: string[] };
+export type NearbyBenefitCard = BenefitCard & {
+  lat: number;
+  lng: number;
+  categoryValues: string[];
+  /** Calificacion (1-3) que el propio usuario le puso a ESTE beneficio, o 0 si nunca lo califico - ver ConnectedBenefitCard.rating. */
+  rating: number;
+};
 
 /**
  * Beneficios de los benefactores conectados que tienen al menos una sede
@@ -448,7 +470,8 @@ export type NearbyBenefitCard = BenefitCard & { lat: number; lng: number; catego
  * tiene varias sedes, usa la primera con coordenadas.
  */
 export async function getNearbyConnectedBenefits(
-  programIds: string[]
+  programIds: string[],
+  userId: string
 ): Promise<NearbyBenefitCard[]> {
   if (programIds.length === 0) return [];
 
@@ -503,6 +526,7 @@ export async function getNearbyConnectedBenefits(
     throw new Error(`No se pudieron resolver los programas: ${programsError.message}`);
   }
   const nameById = new Map((programRows ?? []).map((p) => [p.id as string, p.name as string]));
+  const ownRatingByBenefitId = await getRatingsForBenefits(userId, benefitRows.map((row) => row.id as string));
 
   return benefitRows.map((row) => {
     const coords = coordsByBenefit.get(row.id as string)!;
@@ -515,6 +539,7 @@ export async function getNearbyConnectedBenefits(
       lat: coords.lat,
       lng: coords.lng,
       categoryValues: (row.category_list as string[] | null) ?? [],
+      rating: ownRatingByBenefitId[row.id as string] ?? 0,
     };
   });
 }

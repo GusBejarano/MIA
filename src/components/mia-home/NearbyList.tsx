@@ -5,6 +5,7 @@ import { getPosition, haversineKm } from "@/lib/mia/geolocationClient";
 import { NEARBY_HABITUAL_GATE_MESSAGE, NEARBY_EMPTY_STATE_MESSAGE } from "@/lib/mia/copy";
 import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
 import type { GridCard } from "@/components/mia-home/BenefitGrid";
+import type { Filter } from "@/components/mia-home/HomeTabs";
 
 type NearbyCard = GridCard & { lat: number; lng: number };
 type LocationState = "before" | "denied" | "granted";
@@ -15,17 +16,20 @@ type LocationState = "before" | "denied" | "granted";
  * patron que ya usa DetailSheet.tsx para ordenar sedes. Gateado por
  * getUserMaturityLevel via /api/mia/onboarding/benefits - hoy siempre
  * "explorador", asi que siempre se ve esta version de lista.
+ *
+ * `filter="preferidos"` cambia el orden a calificacion propia (mas
+ * estrellas primero) en vez de distancia - mismo criterio que Conectados/
+ * Explorar cuando esta seleccionado ese filtro (ver HomeTabs.tsx).
  */
 export default function NearbyList({
   userId,
   onSelectBenefit,
-  categoryFilter,
+  filter,
   refreshKey,
 }: {
   userId: string;
   onSelectBenefit: (id: string, title: string) => void;
-  /** VALOR de categoria (no el label) elegido en la fila compartida de HomeTabs.tsx - null = todas. */
-  categoryFilter?: string | null;
+  filter: Filter;
   /** Sube al conectar/desconectar un benefactor o agregar/quitar una ciudad (ver MiaHome.tsx) - si el permiso ya estaba concedido, vuelve a pedir los beneficios sin re-pedir el permiso. */
   refreshKey?: number;
 }) {
@@ -35,9 +39,12 @@ export default function NearbyList({
   const [error, setError] = useState<string | null>(null);
   const lastPosition = useRef<{ lat: number; lng: number } | null>(null);
 
-  const visibleCards = categoryFilter
-    ? (cards ?? []).filter((c) => c.categoryValues?.includes(categoryFilter))
-    : (cards ?? []);
+  const visibleCards =
+    filter.kind === "preferidos"
+      ? [...(cards ?? [])]
+          .filter((c) => (c.rating ?? 0) >= 1)
+          .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+      : (cards ?? []).filter((c) => c.categoryValues?.includes(filter.value));
 
   async function fetchNearby(lat: number, lng: number) {
     const res = await fetch(`/api/mia/onboarding/benefits?userId=${userId}&tab=cerca`);

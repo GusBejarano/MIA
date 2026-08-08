@@ -10,9 +10,10 @@ import ChatOverlay, { type ChatBootstrap } from "@/components/mia-home/ChatOverl
 import ConnectionsSheet from "@/components/mia-home/ConnectionsSheet";
 import ProfileSheet from "@/components/mia-home/ProfileSheet";
 import AvatarCircle from "@/components/mia-home/AvatarCircle";
-import { GearIcon } from "@/components/mia/SheetIcons";
+import DetailSheet from "@/components/mia/DetailSheet";
 import type { GridCard } from "@/components/mia-home/BenefitGrid";
 import type { AvatarKey } from "@/lib/mia/store";
+import type { DetailSheetMessage } from "@/lib/mia/uiMessages";
 
 type Step = "welcome" | "connect" | "cities" | "tabs";
 
@@ -53,7 +54,8 @@ export default function MiaHome() {
   const [chatBootstrap, setChatBootstrap] = useState<ChatBootstrap | null>(null);
   const [chatOverlayOpen, setChatOverlayOpen] = useState(false);
   const [chatFilter, setChatFilter] = useState<ChatFilter | null>(null);
-  const [pendingDetail, setPendingDetail] = useState<{ id: string; title: string } | null>(null);
+  const [directDetail, setDirectDetail] = useState<DetailSheetMessage | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [cities, setCities] = useState<string[]>([]);
@@ -140,7 +142,23 @@ export default function MiaHome() {
       if (!res.ok) throw new Error(data.error ?? "Algo salió mal");
       setPhone(trimmedPhone);
       setUserId(data.userId);
-      setStep("connect");
+
+      // El numero de WhatsApp es el identificador real (no el dispositivo -
+      // ver feedback explicito): si este numero ya tiene benefactores o
+      // ciudades guardados en Supabase, es un regreso aunque este
+      // dispositivo/navegador nunca haya completado el onboarding antes
+      // (celular nuevo, cache borrado, etc.) - se salta OnB-2/OnB-3.
+      const profileRes = await fetch(`/api/mia/onboarding/profile?userId=${data.userId}`);
+      const profileData = await profileRes.json();
+      const alreadyOnboarded =
+        (profileData.connections?.length ?? 0) > 0 || (profileData.cities?.length ?? 0) > 0;
+
+      if (alreadyOnboarded) {
+        rememberUser(trimmedPhone, data.userId);
+        setStep("tabs");
+      } else {
+        setStep("connect");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Algo salió mal");
     } finally {
@@ -153,9 +171,31 @@ export default function MiaHome() {
     setStep("tabs");
   }
 
-  function handleSelectBenefit(id: string, title: string) {
-    setPendingDetail({ id, title });
-    setChatOverlayOpen(true);
+  // Tocar una tarjeta en un grid muestra el detalle directo - reutiliza el
+  // mismo motor de chat (viewBenefitDetail via callMia con viewDetailId,
+  // ver onboarding.ts) para no duplicar exposicion/tip/badge de relacion,
+  // pero SIN abrir el overlay de conversacion alrededor (pedido explicito:
+  // "no quiero que abra el chat con MIA, sino que lo despliegue directo").
+  // El estado de la sesion de fondo se actualiza igual, para que si luego
+  // se abre el chat de verdad (boton flotante) siga desde aqui.
+  async function viewDetail(id: string, title: string) {
+    if (!chatBootstrap) return;
+    setDetailLoading(true);
+    try {
+      const { ui, state } = await callMia({
+        phone,
+        message: `Quiero ver el detalle de "${title}"`,
+        state: chatBootstrap.state,
+        viewDetailId: id,
+      });
+      setChatBootstrap((b) => (b ? { ...b, state } : b));
+      const detail = ui.find((u): u is DetailSheetMessage => u.type === "detail_sheet");
+      if (detail) setDirectDetail(detail);
+    } catch (err) {
+      console.error("No se pudo cargar el detalle del beneficio:", err);
+    } finally {
+      setDetailLoading(false);
+    }
   }
 
   function handleCardCarouselResult(
@@ -270,31 +310,23 @@ export default function MiaHome() {
           <span className="text-zinc-400" aria-hidden>▾</span>
         </button>
 
-        {topBenefactor && (
-          <button
-            type="button"
-            onClick={() => setConnectionsOpen(true)}
-            className="flex w-fit shrink-0 max-w-[40%] items-center gap-1.5 truncate rounded-full bg-zinc-100 px-3 py-1.5 text-left text-sm font-medium text-mia-ink"
-          >
-            <span aria-hidden>★</span>
-            <span className="truncate">
-              {topBenefactor.extraCount > 0
-                ? `${topBenefactor.name} +${topBenefactor.extraCount}`
-                : topBenefactor.name}
-            </span>
-            <span className="text-zinc-400" aria-hidden>▾</span>
-          </button>
-        )}
-
-        <div className="flex-1" />
         <button
           type="button"
           onClick={() => setConnectionsOpen(true)}
-          aria-label="Mis conexiones"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-mia-ink"
+          className="flex w-fit shrink-0 max-w-[40%] items-center gap-1.5 truncate rounded-full bg-zinc-100 px-3 py-1.5 text-left text-sm font-medium text-mia-ink"
         >
-          <GearIcon size={16} />
+          <span aria-hidden>★</span>
+          <span className="truncate">
+            {!topBenefactor
+              ? "Elige tu Benefactor"
+              : topBenefactor.extraCount > 0
+                ? `${topBenefactor.name} +${topBenefactor.extraCount}`
+                : topBenefactor.name}
+          </span>
+          <span className="text-zinc-400" aria-hidden>▾</span>
         </button>
+
+        <div className="flex-1" />
         <div className="shrink-0">
           <AvatarCircle avatar={avatar} size="sm" onClick={() => setProfileOpen(true)} />
         </div>
@@ -304,17 +336,34 @@ export default function MiaHome() {
         userId={userId}
         chatFilter={chatFilter}
         onClearChatFilter={() => setChatFilter(null)}
-        onSelectBenefit={handleSelectBenefit}
+        onSelectBenefit={viewDetail}
         refreshKey={connectionsVersion}
       />
+
+      {detailLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
+          <div className="rounded-full bg-white px-4 py-2 text-sm text-mia-ink shadow-lg">Cargando...</div>
+        </div>
+      )}
+
+      {directDetail && (
+        <DetailSheet
+          message={directDetail}
+          userId={userId}
+          onClose={() => setDirectDetail(null)}
+          onLocationGranted={() =>
+            setChatBootstrap((b) =>
+              b ? { ...b, state: { ...b.state, profile: { ...b.state.profile, locationPermissionGranted: true } } } : b
+            )
+          }
+        />
+      )}
 
       <ChatOverlay
         phone={phone}
         bootstrap={chatBootstrap}
         isOpen={chatOverlayOpen}
         onOpenChange={setChatOverlayOpen}
-        autoOpenDetail={pendingDetail}
-        onAutoOpenDetailConsumed={() => setPendingDetail(null)}
         onCardCarouselResult={handleCardCarouselResult}
       />
 

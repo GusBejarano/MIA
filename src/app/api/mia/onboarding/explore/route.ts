@@ -4,11 +4,16 @@ import { getAvailableCategories, getBenefitsForCategory } from "@/lib/mia/discov
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Tab "Explorar": catalogo por categoria de los benefactores conectados,
-// acotado a la primera ciudad de interes del usuario (simplificacion
-// deliberada - user_cities puede tener varias, getAvailableCategories/
-// getBenefitsForCategory ya existentes solo aceptan una). El filtro que
-// deja una conversacion con MIA (chip removible) se resuelve en el
+// Tab "Explorar": catalogo por categoria de los benefactores conectados.
+// El listado de tarjetas por categoria puntual (getBenefitsForCategory,
+// compartido con el carrusel del chat de produccion) sigue acotado a la
+// primera ciudad de interes - simplificacion deliberada, esa funcion solo
+// acepta una ciudad. Pero el listado de CATEGORIAS (para la fila de filtro
+// compartida en HomeTabs.tsx) sí une todas las ciudades de interes - si
+// solo mirara la primera, un usuario con 2+ ciudades podia ver una fila de
+// categorias mas corta de lo real (bug reportado: "el listado de
+// categorias no es consecuente con los beneficios desplegados"). El filtro
+// que deja una conversacion con MIA (chip removible) se resuelve en el
 // cliente con los resultados que ya trae esa respuesta del chat, no aqui.
 export async function GET(req: NextRequest) {
   const userId = req.nextUrl.searchParams.get("userId");
@@ -25,15 +30,20 @@ export async function GET(req: NextRequest) {
       getUserCities(userId),
     ]);
     const programIds = connections.map((c) => c.programId);
-    const city = cities[0];
-    if (!city) return NextResponse.json({ categories: [], cards: [] });
+    if (cities.length === 0) return NextResponse.json({ categories: [], cards: [] });
 
     if (categoryValue && categoryLabel) {
-      const cards = await getBenefitsForCategory(programIds, categoryValue, categoryLabel, city);
+      const cards = await getBenefitsForCategory(programIds, categoryValue, categoryLabel, cities[0]);
       return NextResponse.json({ cards });
     }
 
-    const categories = await getAvailableCategories(programIds, city);
+    const categoriesByCity = await Promise.all(
+      cities.map((city) => getAvailableCategories(programIds, city))
+    );
+    const categoryByValue = new Map(
+      categoriesByCity.flat().map((c) => [c.value, c])
+    );
+    const categories = [...categoryByValue.values()];
     return NextResponse.json({ categories });
   } catch (err) {
     console.error("Error en /api/mia/onboarding/explore:", err);

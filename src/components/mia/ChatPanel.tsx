@@ -146,14 +146,11 @@ export default function ChatPanel({
   phone,
   initialState,
   initialReply,
-  autoOpenDetail,
   onCardCarouselResult,
 }: {
   phone: string;
   initialState: ClientState;
   initialReply: { reply: string; ui: UiMessage[]; navLinks?: NavLink[] };
-  /** Home nuevo (dev 2.5): al tocar una tarjeta en un grid (fuera del chat), este overlay abre ya mostrando ese detalle - se dispara una sola vez al montar. */
-  autoOpenDetail?: { id: string; title: string };
   /** Home nuevo (dev 2.5): cuando una respuesta de MIA trae un card_carousel, se refleja como filtro (removible, solo de esta sesion) en el tab Explorar - ver HomeTabs.tsx. */
   onCardCarouselResult?: (carousel: CardCarouselMessage, queryLabel: string) => void;
 }) {
@@ -290,14 +287,6 @@ export default function ChatPanel({
       setLoading(false);
     }
   }
-
-  const autoOpenedRef = useRef(false);
-  useEffect(() => {
-    if (!autoOpenDetail || autoOpenedRef.current) return;
-    autoOpenedRef.current = true;
-    handleCardSelect(autoOpenDetail.id, autoOpenDetail.title);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoOpenDetail]);
 
   const showLocationButtons = sessionState.stage === "location_permission" && !loading;
 

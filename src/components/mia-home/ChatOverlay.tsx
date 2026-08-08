@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import ChatPanel from "@/components/mia/ChatPanel";
 import CloseButton from "@/components/mia/CloseButton";
 import type { ClientState } from "@/lib/mia/apiClient";
@@ -20,33 +19,26 @@ export type ChatBootstrap = {
  * retrasarlo hasta que la persona toque el boton - ver MiaHome.tsx).
  * Reutiliza ChatPanel.tsx tal cual, el mismo componente que renderiza el
  * chat de pantalla completa en produccion.
+ *
+ * Tocar una tarjeta en un grid (Conectados/Cerca de ti/Explorar) YA NO
+ * abre este overlay - ver MiaHome.viewDetail(), que llama al mismo motor
+ * de chat pero muestra el DetailSheet solo, sin la conversacion alrededor
+ * (feedback explicito: el detalle debe verse directo). Este overlay queda
+ * exclusivamente para el boton flotante.
  */
 export default function ChatOverlay({
   phone,
   bootstrap,
   isOpen,
   onOpenChange,
-  autoOpenDetail,
-  onAutoOpenDetailConsumed,
   onCardCarouselResult,
 }: {
   phone: string;
   bootstrap: ChatBootstrap | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  autoOpenDetail?: { id: string; title: string } | null;
-  onAutoOpenDetailConsumed?: () => void;
   onCardCarouselResult?: (carousel: CardCarouselMessage, queryLabel: string) => void;
 }) {
-  useEffect(() => {
-    if (autoOpenDetail) onAutoOpenDetailConsumed?.();
-    // Solo nos interesa disparar la limpieza una vez que ChatPanel ya tuvo
-    // oportunidad de leer autoOpenDetail (se lo pasamos por props, el efecto
-    // interno de ChatPanel corre con la misma actualizacion) - no repetir
-    // la limpieza si autoOpenDetail cambia por otras razones.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoOpenDetail]);
-
   return (
     <>
       <button
@@ -75,7 +67,6 @@ export default function ChatOverlay({
                 phone={phone}
                 initialState={bootstrap.state}
                 initialReply={{ reply: bootstrap.reply, ui: bootstrap.ui, navLinks: bootstrap.navLinks }}
-                autoOpenDetail={autoOpenDetail ?? undefined}
                 onCardCarouselResult={onCardCarouselResult}
               />
             ) : (

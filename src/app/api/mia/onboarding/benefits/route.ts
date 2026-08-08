@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
         programId: c.programId,
         prioridad: c.prioridad,
       }));
-      const cards = await getConnectedBenefits(programPriorities, cities);
+      const cards = await getConnectedBenefits(programPriorities, cities, userId);
       return NextResponse.json({ cards });
     }
 
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
     // Sin lat/lng aqui: el cliente ya tiene la posicion (la pidio para
     // mostrar el estado "granted" del tab) y ordena con haversineKm, mismo
     // patron que DetailSheet.tsx para las sedes de un beneficio puntual.
-    const cards = await getNearbyConnectedBenefits(programIds);
+    const cards = await getNearbyConnectedBenefits(programIds, userId);
     return NextResponse.json({ cards, maturityLevel });
   } catch (err) {
     console.error("Error en /api/mia/onboarding/benefits:", err);
