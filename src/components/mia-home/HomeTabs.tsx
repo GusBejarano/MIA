@@ -201,9 +201,17 @@ export default function HomeTabs({
             cualquier paso fallaba en silencio, el boton de "Compartir mi
             ubicacion" volvia a aparecer aunque el permiso siguiera bien en
             BD (bug reportado). Se mantiene siempre montado y solo se oculta
-            con CSS - la redeteccion corre una sola vez por sesion. */}
+            con CSS - la redeteccion del PERMISO corre una sola vez por
+            sesion, pero la POSICION si se vuelve a leer en cada entrada
+            (ver prop `active` en NearbyList.tsx - la persona se mueve, la
+            posicion del primer open ya no sirve para siempre). */}
         <div className={tab === "cerca" ? "" : "hidden"}>
-          <NearbyList userId={userId} onSelectBenefit={onSelectBenefit} refreshKey={refreshKey} />
+          <NearbyList
+            userId={userId}
+            onSelectBenefit={onSelectBenefit}
+            refreshKey={refreshKey}
+            active={tab === "cerca"}
+          />
         </div>
 
         {tab === "sugerencias" && (

@@ -61,11 +61,14 @@ export default function NearbyList({
   userId,
   onSelectBenefit,
   refreshKey,
+  active,
 }: {
   userId: string;
   onSelectBenefit: (id: string, title: string) => void;
   /** Sube al conectar/desconectar un benefactor o agregar/quitar una ciudad (ver MiaHome.tsx) - si el permiso ya estaba concedido, vuelve a pedir los beneficios sin re-pedir el permiso. */
   refreshKey?: number;
+  /** true cuando "Cerca de ti" es el tab activo (ver HomeTabs.tsx) - este componente ya no se desmonta al cambiar de tab (fix del permiso que volvia a pedirse), asi que sin esta señal la posicion se congelaba en la del primer open de toda la sesion y nunca se volvia a leer (bug reportado: "estoy a 330m pero ya no aparece" - la posicion vieja calculaba una distancia mayor al radio). Re-lee la posicion cada vez que se vuelve a entrar a este tab. */
+  active: boolean;
 }) {
   const [locState, setLocState] = useState<LocationState>("checking");
   const [checkingMessageIndex, setCheckingMessageIndex] = useState(0);
@@ -165,6 +168,31 @@ export default function NearbyList({
     fetchNearby(lastPosition.current.lat, lastPosition.current.lng).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
+
+  // Re-lee la posicion real cada vez que se vuelve a entrar a este tab (no
+  // solo la primera vez de toda la sesion) - desde que este componente
+  // dejo de desmontarse al cambiar de tab (fix del permiso que volvia a
+  // pedirse), la posicion quedaba fija en la del primer open y la
+  // distancia mostrada se iba desactualizando a medida que la persona se
+  // movia (bug reportado: "estoy a 330m pero ya no aparece" - seguia
+  // calculando contra una posicion vieja mas lejana que el radio). Se
+  // salta la primerísima activacion (esa ya la cubre el efecto de
+  // deteccion silencial de arriba) para no duplicar el fetch.
+  const skippedFirstActivation = useRef(false);
+  useEffect(() => {
+    if (!active || locState !== "granted") return;
+    if (!skippedFirstActivation.current) {
+      skippedFirstActivation.current = true;
+      return;
+    }
+    getPosition()
+      .then((pos) => {
+        lastPosition.current = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        return fetchNearby(pos.coords.latitude, pos.coords.longitude);
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, locState]);
 
   if (locState === "checking") {
     return (
