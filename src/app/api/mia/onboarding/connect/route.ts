@@ -7,11 +7,17 @@ type RequestBody = {
   userId: string;
   programId: string;
   tipoRelacion: RelationType;
-  esPrincipal: boolean;
+  esPrincipal?: boolean;
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const RELATION_TYPES: RelationType[] = ["afiliado", "empleado", "beneficiario", "estudiante"];
+const RELATION_TYPES: RelationType[] = [
+  "afiliado",
+  "empleado",
+  "beneficiario",
+  "estudiante",
+  "egresado",
+];
 
 export async function POST(req: NextRequest) {
   let body: RequestBody;

@@ -19,14 +19,21 @@ type LocationState = "before" | "denied" | "granted";
 export default function NearbyList({
   userId,
   onSelectBenefit,
+  categoryFilter,
 }: {
   userId: string;
   onSelectBenefit: (id: string, title: string) => void;
+  /** Categoria elegida en la fila compartida de HomeTabs.tsx - null = todas. */
+  categoryFilter?: string | null;
 }) {
   const [locState, setLocState] = useState<LocationState>("before");
   const [cards, setCards] = useState<(NearbyCard & { distanceKm: number })[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const visibleCards = categoryFilter
+    ? (cards ?? []).filter((c) => c.tag === categoryFilter)
+    : (cards ?? []);
 
   async function requestLocation() {
     setLoading(true);
@@ -86,7 +93,7 @@ export default function NearbyList({
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3">
-        {(cards ?? []).map((card) => (
+        {visibleCards.map((card) => (
           <button
             key={card.id}
             type="button"
@@ -111,7 +118,7 @@ export default function NearbyList({
         ))}
       </div>
 
-      {(cards ?? []).length === 0 && (
+      {visibleCards.length === 0 && (
         <p className="px-1 py-4 text-center text-sm text-zinc-400">{NEARBY_EMPTY_STATE_MESSAGE}</p>
       )}
 

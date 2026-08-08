@@ -618,7 +618,12 @@ export async function saveAvatar(userId: string, avatar: AvatarKey) {
   }
 }
 
-export type RelationType = "afiliado" | "empleado" | "beneficiario" | "estudiante";
+export type RelationType =
+  | "afiliado"
+  | "empleado"
+  | "beneficiario"
+  | "estudiante"
+  | "egresado";
 
 export type UserConnection = {
   programId: string;
@@ -626,20 +631,21 @@ export type UserConnection = {
   esPrincipal: boolean;
   verificado: boolean;
   connectedAt: string | null;
+  /** 1-3, mas estrellas = mas prioridad al mostrar los beneficios de este benefactor (tab Conectados) - ver 2026.08.07-mia_dev25_connection_priority.sql. Reemplaza esPrincipal en la UI de "Mis conexiones" (esPrincipal queda en el esquema sin usarse). */
+  prioridad: number;
 };
 
 /**
  * Conecta (o actualiza) un benefactor para el usuario, con su tipo de
- * relacion. Si `esPrincipal` es true, desmarca cualquier otra conexion
- * principal del mismo usuario de forma atomica via el RPC
- * set_principal_connection - dos UPDATE sueltos por REST no serian
- * atomicos entre si (ver comentario en la migracion SQL).
+ * relacion. `esPrincipal` ya no se expone en la UI (ver `prioridad` /
+ * saveConnectionPriority) - el parametro queda por compatibilidad con el
+ * RPC set_principal_connection, pero nada en la UI nueva lo manda en true.
  */
 export async function saveUserConnection(
   userId: string,
   programId: string,
   tipoRelacion: RelationType,
-  esPrincipal: boolean
+  esPrincipal: boolean = false
 ) {
   const { error } = await supabase.from("user_programs").upsert(
     {
@@ -665,6 +671,18 @@ export async function saveUserConnection(
   }
 }
 
+/** Cambia la prioridad (1-3 estrellas) de un benefactor conectado - ver UserConnection.prioridad. */
+export async function saveConnectionPriority(userId: string, programId: string, prioridad: number) {
+  const { error } = await supabase
+    .from("user_programs")
+    .update({ prioridad })
+    .eq("user_id", userId)
+    .eq("program_id", programId);
+  if (error) {
+    throw new Error(`No se pudo guardar la prioridad: ${error.message}`);
+  }
+}
+
 /** Quita la conexion con un benefactor (boton "Desconectar" en "Mis conexiones"). */
 export async function removeUserConnection(userId: string, programId: string) {
   const { error } = await supabase
@@ -677,11 +695,11 @@ export async function removeUserConnection(userId: string, programId: string) {
   }
 }
 
-/** Conexiones (benefactores) del usuario, con tipo de relacion y cual es la principal. */
+/** Conexiones (benefactores) del usuario, con tipo de relacion y prioridad (1-3 estrellas). */
 export async function getUserConnections(userId: string): Promise<UserConnection[]> {
   const { data, error } = await supabase
     .from("user_programs")
-    .select("program_id, tipo_relacion, es_principal, verificado, connected_at")
+    .select("program_id, tipo_relacion, es_principal, verificado, connected_at, prioridad")
     .eq("user_id", userId);
   if (error) {
     throw new Error(`No se pudieron leer las conexiones: ${error.message}`);
@@ -692,6 +710,7 @@ export async function getUserConnections(userId: string): Promise<UserConnection
     esPrincipal: Boolean(row.es_principal),
     verificado: Boolean(row.verificado),
     connectedAt: (row.connected_at as string | null) ?? null,
+    prioridad: (row.prioridad as number | null) ?? 1,
   }));
 }
 

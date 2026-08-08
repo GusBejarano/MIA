@@ -2,24 +2,17 @@
 
 import { useEffect, useState } from "react";
 import type { RelationType } from "@/lib/mia/store";
+import RelationTypeSelect, { RELATION_LABELS } from "@/components/mia-home/RelationTypeSelect";
 
 type ProgramOption = { id: string; name: string; color: string };
 
-const RELATION_LABELS: Record<RelationType, string> = {
-  afiliado: "Afiliado",
-  empleado: "Empleado",
-  beneficiario: "Beneficiario",
-  estudiante: "Estudiante",
-};
-const RELATION_TYPES = Object.keys(RELATION_LABELS) as RelationType[];
-
 /**
- * OnB-2: "Conecta con tus Benefactores" - tocar un benefactor revela el
- * chip-confirm de tipo de relacion (mismo patron que ya usa el aprendizaje
- * de perfil para genero, ver ChipSelect.tsx), tocar un chip confirma y
- * guarda de una vez (POST /api/mia/onboarding/connect). El primer
- * benefactor conectado queda como principal - "Mis conexiones"
- * (ConnectionsSheet.tsx) permite cambiarlo despues.
+ * OnB-2: "Conecta con tus Benefactores" - tocar "Conectar" revela el
+ * selector de tipo de relacion (RelationTypeSelect.tsx, lista de seleccion
+ * unica de verdad), elegir y confirmar guarda de una vez (POST
+ * /api/mia/onboarding/connect). La prioridad (1-3 estrellas, ver
+ * ConnectionsSheet.tsx) se ajusta despues desde "Mis conexiones" - aqui
+ * todas quedan en 1 por defecto.
  */
 export default function OnboardingConnect({
   userId,
@@ -48,12 +41,7 @@ export default function OnboardingConnect({
       const res = await fetch("/api/mia/onboarding/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          programId,
-          tipoRelacion: relation,
-          esPrincipal: Object.keys(connected).length === 0,
-        }),
+        body: JSON.stringify({ userId, programId, tipoRelacion: relation }),
       });
       if (!res.ok) throw new Error();
       setConnected((prev) => ({ ...prev, [programId]: relation }));
@@ -104,18 +92,8 @@ export default function OnboardingConnect({
               </div>
 
               {activeProgramId === p.id && !relation && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {RELATION_TYPES.map((rt) => (
-                    <button
-                      key={rt}
-                      type="button"
-                      disabled={saving}
-                      onClick={() => confirmRelation(p.id, rt)}
-                      className="rounded-full border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-mia-ink disabled:opacity-50"
-                    >
-                      {RELATION_LABELS[rt]}
-                    </button>
-                  ))}
+                <div className="mt-3">
+                  <RelationTypeSelect onConfirm={(rt) => confirmRelation(p.id, rt)} busy={saving} />
                 </div>
               )}
             </div>

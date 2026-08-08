@@ -352,6 +352,8 @@ function startOfTodayBogotaISO(): string {
 // Onboarding v2 (dev 2.5) - tabs Conectados / Cerca de ti del home nuevo.
 // ------------------------------------------------------------
 
+export type ProgramPriority = { programId: string; prioridad: number };
+
 /**
  * Beneficios de los benefactores conectados del usuario, en cualquiera de
  * sus ciudades de interes (union, no interseccion) - tab "Conectados". Sin
@@ -359,12 +361,21 @@ function startOfTodayBogotaISO(): string {
  * cityValues viene vacio (usuario nunca paso por OnB-3) devuelve [] en vez
  * de traer beneficios de cualquier ciudad - ninguna pantalla debe asumir
  * cobertura sin que el usuario haya elegido al menos una ciudad.
+ *
+ * Ordenado por la prioridad (1-3 estrellas) que el usuario le dio a cada
+ * benefactor en "Mis conexiones" - mas estrellas primero (ver
+ * UserConnection.prioridad en store.ts). Esto es exclusivo de este tab: NO
+ * toca getBenefitsForCategory (el catalogo por categoria que tambien usa el
+ * carrusel del chat de produccion), que sigue ordenando por calificacion
+ * del propio beneficio, sin relacion con esto.
  */
 export async function getConnectedBenefits(
-  programIds: string[],
+  programPriorities: ProgramPriority[],
   cityValues: string[]
 ): Promise<BenefitCard[]> {
-  if (programIds.length === 0 || cityValues.length === 0) return [];
+  if (programPriorities.length === 0 || cityValues.length === 0) return [];
+  const programIds = programPriorities.map((p) => p.programId);
+  const priorityById = new Map(programPriorities.map((p) => [p.programId, p.prioridad]));
 
   const scopeKeysByCity = await Promise.all(
     cityValues.map((city) => supabase.rpc("resolve_city_scope", { target_city: city }))
@@ -396,13 +407,22 @@ export async function getConnectedBenefits(
   }
   const nameById = new Map((programRows ?? []).map((p) => [p.id as string, p.name as string]));
 
-  return (data ?? []).map((row) => ({
+  const cards: BenefitCard[] = (data ?? []).map((row) => ({
     id: row.id as string,
     title: row.title as string,
     tag: nameById.get(row.source_program_id as string) ?? "",
     sourceProgram: nameById.get(row.source_program_id as string) ?? "",
     thumbUrl: (row.image_url as string) ?? null,
   }));
+  const priorityByBenefitId = new Map(
+    (data ?? []).map((row) => [
+      row.id as string,
+      priorityById.get(row.source_program_id as string) ?? 1,
+    ])
+  );
+  return cards.sort(
+    (a, b) => (priorityByBenefitId.get(b.id) ?? 1) - (priorityByBenefitId.get(a.id) ?? 1)
+  );
 }
 
 export type NearbyBenefitCard = BenefitCard & { lat: number; lng: number };

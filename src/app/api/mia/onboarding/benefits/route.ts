@@ -22,7 +22,11 @@ export async function GET(req: NextRequest) {
 
     if (tab === "conectados") {
       const cities = await getUserCities(userId);
-      const cards = await getConnectedBenefits(programIds, cities);
+      const programPriorities = connections.map((c) => ({
+        programId: c.programId,
+        prioridad: c.prioridad,
+      }));
+      const cards = await getConnectedBenefits(programPriorities, cities);
       return NextResponse.json({ cards });
     }
 

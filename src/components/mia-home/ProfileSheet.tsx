@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AvatarKey } from "@/lib/mia/store";
 import CloseButton from "@/components/mia/CloseButton";
+import { PersonIcon } from "@/components/mia/SheetIcons";
 
 type ProfileDetails = {
   name: string | null;
@@ -135,6 +136,9 @@ export default function ProfileSheet({ userId, onClose }: { userId: string; onCl
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/35">
       <div className="flex h-[85%] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white">
         <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-mia-ink text-white">
+            <PersonIcon size={14} />
+          </span>
           <span className="flex-1 text-sm font-semibold text-mia-ink">Mi perfil</span>
           <CloseButton onClick={onClose} variant="header" />
         </div>

@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 import type { RelationType } from "@/lib/mia/store";
 import CloseButton from "@/components/mia/CloseButton";
+import { GearIcon } from "@/components/mia/SheetIcons";
+import RelationTypeSelect, { RELATION_LABELS } from "@/components/mia-home/RelationTypeSelect";
+import RatingStars from "@/components/mia/RatingStars";
 
 type ProgramOption = { id: string; name: string; color: string };
 type CityOption = { value: string; label: string; count: number };
@@ -10,21 +13,14 @@ type Connection = {
   programId: string;
   programName: string;
   tipoRelacion: RelationType | null;
-  esPrincipal: boolean;
+  prioridad: number;
 };
-
-const RELATION_LABELS: Record<RelationType, string> = {
-  afiliado: "Afiliado",
-  empleado: "Empleado",
-  beneficiario: "Beneficiario",
-  estudiante: "Estudiante",
-};
-const RELATION_TYPES = Object.keys(RELATION_LABELS) as RelationType[];
 
 /**
  * "Mis conexiones" - conectar/desconectar benefactores (con tipo de
- * relacion y cual es la principal, rule 5 del prompt: atomico via RPC
- * set_principal_connection - ver store.ts) y agregar/quitar ciudades de
+ * relacion y prioridad 1-3 estrellas: mas estrellas, mas prioridad al
+ * mostrar sus beneficios en el tab "Conectados" - ver
+ * UserConnection.prioridad en store.ts) y agregar/quitar ciudades de
  * interes.
  */
 export default function ConnectionsSheet({
@@ -69,12 +65,7 @@ export default function ConnectionsSheet({
       await fetch("/api/mia/onboarding/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          programId,
-          tipoRelacion: relation,
-          esPrincipal: (connections ?? []).length === 0,
-        }),
+        body: JSON.stringify({ userId, programId, tipoRelacion: relation }),
       });
       setAddingProgramId(null);
       setShowAddPrograms(false);
@@ -98,17 +89,22 @@ export default function ConnectionsSheet({
     }
   }
 
-  async function makePrincipal(programId: string, relation: RelationType) {
+  async function setPriority(programId: string, prioridad: number) {
+    // Optimista - RatingStars ya se ve tocable, no queremos que se sienta
+    // lento; si falla, reload() en el finally lo corrige solo.
+    setConnections((prev) =>
+      prev ? prev.map((c) => (c.programId === programId ? { ...c, prioridad } : c)) : prev
+    );
     setBusy(true);
     try {
-      await fetch("/api/mia/onboarding/connect", {
+      await fetch("/api/mia/onboarding/priority", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, programId, tipoRelacion: relation, esPrincipal: true }),
+        body: JSON.stringify({ userId, programId, prioridad }),
       });
-      reload();
     } finally {
       setBusy(false);
+      reload();
     }
   }
 
@@ -150,6 +146,9 @@ export default function ConnectionsSheet({
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/35">
       <div className="flex h-[82%] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white">
         <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-mia-ink text-white">
+            <GearIcon size={14} />
+          </span>
           <span className="flex-1 text-sm font-semibold text-mia-ink">Mis conexiones</span>
           <CloseButton onClick={onClose} variant="header" />
         </div>
@@ -157,6 +156,9 @@ export default function ConnectionsSheet({
         <div className="flex-1 overflow-y-auto px-4 py-4">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
             Benefactores conectados
+          </p>
+          <p className="mb-3 text-xs text-zinc-400">
+            Más estrellas = más prioridad al mostrar los beneficios de ese benefactor.
           </p>
           <div className="flex flex-col gap-2">
             {(connections ?? []).map((c) => (
@@ -177,20 +179,7 @@ export default function ConnectionsSheet({
                     Desconectar
                   </button>
                 </div>
-                {c.esPrincipal ? (
-                  <p className="mt-2 flex items-center gap-1 text-xs font-semibold text-mia-violet">
-                    <span aria-hidden>★</span> Conexión principal
-                  </p>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={busy || !c.tipoRelacion}
-                    onClick={() => c.tipoRelacion && makePrincipal(c.programId, c.tipoRelacion)}
-                    className="mt-2 flex items-center gap-1 text-xs font-semibold text-zinc-400 disabled:opacity-50"
-                  >
-                    <span aria-hidden>☆</span> Hacer principal
-                  </button>
-                )}
+                <RatingStars rating={c.prioridad} onRate={(r) => setPriority(c.programId, Math.max(1, r))} size={16} />
               </div>
             ))}
 
@@ -215,18 +204,8 @@ export default function ConnectionsSheet({
                       )}
                     </div>
                     {addingProgramId === p.id && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {RELATION_TYPES.map((rt) => (
-                          <button
-                            key={rt}
-                            type="button"
-                            disabled={busy}
-                            onClick={() => connectProgram(p.id, rt)}
-                            className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-mia-ink disabled:opacity-50"
-                          >
-                            {RELATION_LABELS[rt]}
-                          </button>
-                        ))}
+                      <div className="mt-2">
+                        <RelationTypeSelect onConfirm={(rt) => connectProgram(p.id, rt)} busy={busy} />
                       </div>
                     )}
                   </div>

@@ -9,6 +9,7 @@ import HomeTabs, { type ChatFilter } from "@/components/mia-home/HomeTabs";
 import ChatOverlay, { type ChatBootstrap } from "@/components/mia-home/ChatOverlay";
 import ConnectionsSheet from "@/components/mia-home/ConnectionsSheet";
 import ProfileSheet from "@/components/mia-home/ProfileSheet";
+import { GearIcon } from "@/components/mia/SheetIcons";
 import type { GridCard } from "@/components/mia-home/BenefitGrid";
 
 type Step = "welcome" | "connect" | "cities" | "tabs";
@@ -53,6 +54,14 @@ export default function MiaHome() {
   const [pendingDetail, setPendingDetail] = useState<{ id: string; title: string } | null>(null);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [cities, setCities] = useState<string[]>([]);
+
+  function loadCities(uid: string) {
+    fetch(`/api/mia/onboarding/profile?userId=${uid}`)
+      .then((r) => r.json())
+      .then((data: { cities?: string[] }) => setCities(data.cities ?? []))
+      .catch(() => {});
+  }
 
   useEffect(() => {
     fetch("/api/health").catch(() => {});
@@ -71,6 +80,10 @@ export default function MiaHome() {
       setStep("tabs");
     }
   }, []);
+
+  useEffect(() => {
+    if (step === "tabs" && userId) loadCities(userId);
+  }, [step, userId]);
 
   // Bootstrap del chat en segundo plano al entrar a los tabs - un solo
   // session_started por visita, sin importar si la persona llega ahi por
@@ -211,9 +224,25 @@ export default function MiaHome() {
         <button
           type="button"
           onClick={() => setConnectionsOpen(true)}
-          className="flex flex-1 items-center gap-1.5 rounded-full bg-zinc-100 px-3 py-1.5 text-left text-sm font-medium text-mia-ink"
+          className="flex flex-1 items-center gap-1.5 truncate rounded-full bg-zinc-100 px-3 py-1.5 text-left text-sm font-medium text-mia-ink"
         >
-          Mis conexiones
+          <span aria-hidden>📍</span>
+          <span className="truncate">
+            {cities.length === 0
+              ? "Elige tu ciudad"
+              : cities.length === 1
+                ? cities[0]
+                : `${cities[0]} +${cities.length - 1}`}
+          </span>
+          <span className="text-zinc-400" aria-hidden>▾</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setConnectionsOpen(true)}
+          aria-label="Mis conexiones"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-mia-ink"
+        >
+          <GearIcon size={16} />
         </button>
         <button
           type="button"
@@ -242,7 +271,15 @@ export default function MiaHome() {
         onCardCarouselResult={handleCardCarouselResult}
       />
 
-      {connectionsOpen && <ConnectionsSheet userId={userId} onClose={() => setConnectionsOpen(false)} />}
+      {connectionsOpen && (
+        <ConnectionsSheet
+          userId={userId}
+          onClose={() => {
+            setConnectionsOpen(false);
+            loadCities(userId);
+          }}
+        />
+      )}
       {profileOpen && <ProfileSheet userId={userId} onClose={() => setProfileOpen(false)} />}
     </div>
   );
