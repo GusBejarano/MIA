@@ -354,6 +354,8 @@ function startOfTodayBogotaISO(): string {
 
 export type ProgramPriority = { programId: string; prioridad: number };
 
+export type ConnectedBenefitCard = BenefitCard & { categoryValues: string[] };
+
 /**
  * Beneficios de los benefactores conectados del usuario, en cualquiera de
  * sus ciudades de interes (union, no interseccion) - tab "Conectados". Sin
@@ -361,6 +363,13 @@ export type ProgramPriority = { programId: string; prioridad: number };
  * cityValues viene vacio (usuario nunca paso por OnB-3) devuelve [] en vez
  * de traer beneficios de cualquier ciudad - ninguna pantalla debe asumir
  * cobertura sin que el usuario haya elegido al menos una ciudad.
+ *
+ * `tag` sigue siendo el nombre del benefactor (mas util aqui que la
+ * categoria, ya visible en la fila de filtro compartida) - `categoryValues`
+ * es aparte, solo para que la fila de categorias de HomeTabs.tsx pueda
+ * filtrar por coincidencia de VALOR normalizado (category_list), no por
+ * comparar texto de `tag` contra la categoria (bug real: `tag` nunca fue la
+ * categoria, el filtro no filtraba nada).
  *
  * Ordenado por la prioridad (1-3 estrellas) que el usuario le dio a cada
  * benefactor en "Mis conexiones" - mas estrellas primero (ver
@@ -372,7 +381,7 @@ export type ProgramPriority = { programId: string; prioridad: number };
 export async function getConnectedBenefits(
   programPriorities: ProgramPriority[],
   cityValues: string[]
-): Promise<BenefitCard[]> {
+): Promise<ConnectedBenefitCard[]> {
   if (programPriorities.length === 0 || cityValues.length === 0) return [];
   const programIds = programPriorities.map((p) => p.programId);
   const priorityById = new Map(programPriorities.map((p) => [p.programId, p.prioridad]));
@@ -390,7 +399,7 @@ export async function getConnectedBenefits(
 
   const { data, error } = await supabase
     .from("benefits")
-    .select("id, title, source_program_id, image_url")
+    .select("id, title, source_program_id, image_url, category_list")
     .eq("status", "activo")
     .in("source_program_id", programIds)
     .overlaps("city_list", scopeKeys);
@@ -407,12 +416,13 @@ export async function getConnectedBenefits(
   }
   const nameById = new Map((programRows ?? []).map((p) => [p.id as string, p.name as string]));
 
-  const cards: BenefitCard[] = (data ?? []).map((row) => ({
+  const cards: ConnectedBenefitCard[] = (data ?? []).map((row) => ({
     id: row.id as string,
     title: row.title as string,
     tag: nameById.get(row.source_program_id as string) ?? "",
     sourceProgram: nameById.get(row.source_program_id as string) ?? "",
     thumbUrl: (row.image_url as string) ?? null,
+    categoryValues: (row.category_list as string[] | null) ?? [],
   }));
   const priorityByBenefitId = new Map(
     (data ?? []).map((row) => [
@@ -425,7 +435,7 @@ export async function getConnectedBenefits(
   );
 }
 
-export type NearbyBenefitCard = BenefitCard & { lat: number; lng: number };
+export type NearbyBenefitCard = BenefitCard & { lat: number; lng: number; categoryValues: string[] };
 
 /**
  * Beneficios de los benefactores conectados que tienen al menos una sede
@@ -476,7 +486,7 @@ export async function getNearbyConnectedBenefits(
 
   const { data: benefitRows, error: benefitsError } = await supabase
     .from("benefits")
-    .select("id, title, source_program_id, image_url")
+    .select("id, title, source_program_id, image_url, category_list")
     .eq("status", "activo")
     .in("source_program_id", programIds)
     .in("id", [...coordsByBenefit.keys()]);
@@ -504,6 +514,7 @@ export async function getNearbyConnectedBenefits(
       thumbUrl: (row.image_url as string) ?? null,
       lat: coords.lat,
       lng: coords.lng,
+      categoryValues: (row.category_list as string[] | null) ?? [],
     };
   });
 }

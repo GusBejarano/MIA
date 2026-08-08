@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { AvatarKey } from "@/lib/mia/store";
 import CloseButton from "@/components/mia/CloseButton";
 import { PersonIcon } from "@/components/mia/SheetIcons";
+import AvatarCircle, { AVATAR_KEYS } from "@/components/mia-home/AvatarCircle";
 
 type ProfileDetails = {
   name: string | null;
@@ -12,54 +13,6 @@ type ProfileDetails = {
   whatsappNumber: string | null;
   avatar: AvatarKey;
 };
-
-// Los 3 avatares van en public/avatars/avatar-{negro|verde|fucsia}.png (los
-// 3 valores que ya guarda la BD, ver supabase/2026.08.07-...sql). Mientras
-// ese archivo no exista todavia para una clave puntual, AvatarCircle cae a
-// un circulo de color solido en vez de un icono roto - mismo patron de
-// fallback que BenefitThumbnail.tsx.
-const AVATAR_FALLBACK_COLOR: Record<AvatarKey, string> = {
-  negro: "bg-mia-ink",
-  verde: "bg-mia-violet",
-  fucsia: "bg-mia-cyan",
-};
-const AVATAR_KEYS = Object.keys(AVATAR_FALLBACK_COLOR) as AvatarKey[];
-
-function AvatarCircle({
-  avatar,
-  size,
-  selected,
-  onClick,
-}: {
-  avatar: AvatarKey;
-  size: "sm" | "lg";
-  selected?: boolean;
-  onClick?: () => void;
-}) {
-  const [failed, setFailed] = useState(false);
-  const dimension = size === "lg" ? "h-16 w-16" : "h-10 w-10";
-  const ring = selected ? "ring-2 ring-offset-2 ring-mia-violet" : "";
-
-  const content = failed ? (
-    <div className={`${dimension} rounded-full ${AVATAR_FALLBACK_COLOR[avatar]}`} />
-  ) : (
-    // eslint-disable-next-line @next/next/no-img-element -- fallback a color si el PNG todavia no existe en public/avatars/
-    <img
-      src={`/avatars/avatar-${avatar}.png`}
-      alt={`Avatar ${avatar}`}
-      onError={() => setFailed(true)}
-      className={`${dimension} rounded-full object-cover`}
-    />
-  );
-
-  if (!onClick) return <div className={ring}>{content}</div>;
-
-  return (
-    <button type="button" onClick={onClick} aria-label={`Avatar ${avatar}`} className={`rounded-full ${ring}`}>
-      {content}
-    </button>
-  );
-}
 
 const GENDER_OPTIONS = [
   { value: "femenino", label: "Femenino" },

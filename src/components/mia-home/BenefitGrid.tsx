@@ -9,6 +9,8 @@ export type GridCard = {
   thumbUrl: string | null;
   /** Solo en el tab "Conectados" - distingue visualmente lo que ya es tuyo. */
   connected?: boolean;
+  /** Valores normalizados de categoria (category_list) - para el filtro de la fila de categorias de HomeTabs.tsx, nunca para mostrar (eso es `tag`). */
+  categoryValues?: string[];
 };
 
 /**

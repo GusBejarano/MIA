@@ -9,8 +9,10 @@ import HomeTabs, { type ChatFilter } from "@/components/mia-home/HomeTabs";
 import ChatOverlay, { type ChatBootstrap } from "@/components/mia-home/ChatOverlay";
 import ConnectionsSheet from "@/components/mia-home/ConnectionsSheet";
 import ProfileSheet from "@/components/mia-home/ProfileSheet";
+import AvatarCircle from "@/components/mia-home/AvatarCircle";
 import { GearIcon } from "@/components/mia/SheetIcons";
 import type { GridCard } from "@/components/mia-home/BenefitGrid";
+import type { AvatarKey } from "@/lib/mia/store";
 
 type Step = "welcome" | "connect" | "cities" | "tabs";
 
@@ -55,11 +57,36 @@ export default function MiaHome() {
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [cities, setCities] = useState<string[]>([]);
+  const [topBenefactor, setTopBenefactor] = useState<{ name: string; extraCount: number } | null>(null);
+  const [avatar, setAvatar] = useState<AvatarKey>("negro");
+  // Sube cada vez que se cierra "Mis conexiones" - HomeTabs usa esto para
+  // volver a pedir los beneficios (conectar/desconectar un benefactor o
+  // agregar/quitar una ciudad debe reflejarse de una vez, no solo en el
+  // proximo refresco de pagina).
+  const [connectionsVersion, setConnectionsVersion] = useState(0);
 
-  function loadCities(uid: string) {
+  // Ciudad(es), benefactor con mas estrellas (para el pill del header, ver
+  // feedback de la segunda prueba en vivo) y avatar (el boton de perfil
+  // mostraba el logo de MIA fijo en vez del avatar real - tambien reportado).
+  function loadHeaderData(uid: string) {
     fetch(`/api/mia/onboarding/profile?userId=${uid}`)
       .then((r) => r.json())
-      .then((data: { cities?: string[] }) => setCities(data.cities ?? []))
+      .then(
+        (data: {
+          cities?: string[];
+          connections?: { programName: string; prioridad: number }[];
+          profile?: { avatar: AvatarKey };
+        }) => {
+          setCities(data.cities ?? []);
+          setAvatar(data.profile?.avatar ?? "negro");
+          const sorted = [...(data.connections ?? [])].sort((a, b) => b.prioridad - a.prioridad);
+          setTopBenefactor(
+            sorted.length === 0
+              ? null
+              : { name: sorted[0].programName, extraCount: sorted.length - 1 }
+          );
+        }
+      )
       .catch(() => {});
   }
 
@@ -82,7 +109,7 @@ export default function MiaHome() {
   }, []);
 
   useEffect(() => {
-    if (step === "tabs" && userId) loadCities(userId);
+    if (step === "tabs" && userId) loadHeaderData(userId);
   }, [step, userId]);
 
   // Bootstrap del chat en segundo plano al entrar a los tabs - un solo
@@ -220,11 +247,17 @@ export default function MiaHome() {
 
   return (
     <div className="flex h-dvh flex-col bg-white">
-      <header className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3">
+      <div className="flex shrink-0 items-center gap-2 border-b border-zinc-100 px-4 pt-3">
+        <Image src="/logo/mia-icon.png" alt="" width={22} height={22} className="h-[22px] w-[22px]" />
+        <span className="mia-gradient-text text-base font-bold">mia</span>
+        <span className="text-[11px] text-zinc-400">by Descuentos Inteligentes</span>
+      </div>
+
+      <header className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-zinc-100 px-4 py-3">
         <button
           type="button"
           onClick={() => setConnectionsOpen(true)}
-          className="flex flex-1 items-center gap-1.5 truncate rounded-full bg-zinc-100 px-3 py-1.5 text-left text-sm font-medium text-mia-ink"
+          className="flex w-fit shrink-0 max-w-[40%] items-center gap-1.5 truncate rounded-full bg-zinc-100 px-3 py-1.5 text-left text-sm font-medium text-mia-ink"
         >
           <span aria-hidden>📍</span>
           <span className="truncate">
@@ -236,6 +269,24 @@ export default function MiaHome() {
           </span>
           <span className="text-zinc-400" aria-hidden>▾</span>
         </button>
+
+        {topBenefactor && (
+          <button
+            type="button"
+            onClick={() => setConnectionsOpen(true)}
+            className="flex w-fit shrink-0 max-w-[40%] items-center gap-1.5 truncate rounded-full bg-zinc-100 px-3 py-1.5 text-left text-sm font-medium text-mia-ink"
+          >
+            <span aria-hidden>★</span>
+            <span className="truncate">
+              {topBenefactor.extraCount > 0
+                ? `${topBenefactor.name} +${topBenefactor.extraCount}`
+                : topBenefactor.name}
+            </span>
+            <span className="text-zinc-400" aria-hidden>▾</span>
+          </button>
+        )}
+
+        <div className="flex-1" />
         <button
           type="button"
           onClick={() => setConnectionsOpen(true)}
@@ -244,14 +295,9 @@ export default function MiaHome() {
         >
           <GearIcon size={16} />
         </button>
-        <button
-          type="button"
-          onClick={() => setProfileOpen(true)}
-          aria-label="Mi perfil"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-mia-ink text-xs font-bold text-white"
-        >
-          <Image src="/logo/mia-icon.png" alt="" width={18} height={18} className="h-4.5 w-4.5" />
-        </button>
+        <div className="shrink-0">
+          <AvatarCircle avatar={avatar} size="sm" onClick={() => setProfileOpen(true)} />
+        </div>
       </header>
 
       <HomeTabs
@@ -259,6 +305,7 @@ export default function MiaHome() {
         chatFilter={chatFilter}
         onClearChatFilter={() => setChatFilter(null)}
         onSelectBenefit={handleSelectBenefit}
+        refreshKey={connectionsVersion}
       />
 
       <ChatOverlay
@@ -276,11 +323,20 @@ export default function MiaHome() {
           userId={userId}
           onClose={() => {
             setConnectionsOpen(false);
-            loadCities(userId);
+            loadHeaderData(userId);
+            setConnectionsVersion((v) => v + 1);
           }}
         />
       )}
-      {profileOpen && <ProfileSheet userId={userId} onClose={() => setProfileOpen(false)} />}
+      {profileOpen && (
+        <ProfileSheet
+          userId={userId}
+          onClose={() => {
+            setProfileOpen(false);
+            loadHeaderData(userId);
+          }}
+        />
+      )}
     </div>
   );
 }

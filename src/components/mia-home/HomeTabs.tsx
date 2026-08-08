@@ -19,22 +19,33 @@ export type ChatFilter = { label: string; cards: GridCard[] };
  * OnB-4 / home de retorno: tabs Conectados / Cerca de ti / Explorar +
  * fila de categorias compartida entre las 3 (debajo de los tabs, igual que
  * el prototipo) - elegir una categoria filtra la que este activa en ese
- * momento, no solo Explorar. El filtro que deja una conversacion con MIA
- * (chip removible, ver ChatOverlay.tsx -> MiaHome.tsx) vive en
- * `chatFilter`, propiedad de MiaHome - nunca se persiste, es de esta
- * sesion unicamente, y solo aplica al tab Explorar (es resultado de una
- * busqueda puntual, no una categoria).
+ * momento, no solo Explorar.
+ *
+ * Tabs y categorias viven FUERA del contenedor que hace scroll (a
+ * diferencia de la primera version): si estuvieran adentro, el alto
+ * variable del grid de beneficios podia empujarlas fuera de vista o
+ * comprimirlas via flex-shrink apenas cargaban las tarjetas - se vio en
+ * pruebas reales. `shrink-0` en ambas filas + el area de contenido con su
+ * propio `overflow-y-auto` les reserva un espacio fijo sin importar el
+ * tamano de pantalla.
+ *
+ * `refreshKey` sube cada vez que se cierra "Mis conexiones" (ver
+ * MiaHome.tsx) - conectar/desconectar un benefactor o agregar/quitar una
+ * ciudad debe reflejarse de una vez en los 3 tabs, no solo en el proximo
+ * refresco de pagina.
  */
 export default function HomeTabs({
   userId,
   chatFilter,
   onClearChatFilter,
   onSelectBenefit,
+  refreshKey,
 }: {
   userId: string;
   chatFilter: ChatFilter | null;
   onClearChatFilter: () => void;
   onSelectBenefit: (id: string, title: string) => void;
+  refreshKey: number;
 }) {
   const [tab, setTab] = useState<Tab>("conectados");
   const [connectedCards, setConnectedCards] = useState<GridCard[] | null>(null);
@@ -43,20 +54,26 @@ export default function HomeTabs({
   const [explorarCards, setExplorarCards] = useState<GridCard[] | null>(null);
 
   useEffect(() => {
-    if (connectedCards !== null) return;
+    // Reset a "Cargando..." antes del fetch - refreshKey puede volver a
+    // disparar este efecto con datos previos todavia en pantalla (conectar/
+    // desconectar un benefactor), no queremos mostrar el grid viejo mientras
+    // llega el nuevo.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setConnectedCards(null);
     fetch(`/api/mia/onboarding/benefits?userId=${userId}&tab=conectados`)
       .then((r) => r.json())
       .then((data) => setConnectedCards(data.cards ?? []))
       .catch(() => setConnectedCards([]));
-  }, [userId, connectedCards]);
+  }, [userId, refreshKey]);
 
   useEffect(() => {
-    if (categories !== null) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCategories(null);
     fetch(`/api/mia/onboarding/explore?userId=${userId}`)
       .then((r) => r.json())
       .then((data) => setCategories(data.categories ?? []))
       .catch(() => setCategories([]));
-  }, [userId, categories]);
+  }, [userId, refreshKey]);
 
   useEffect(() => {
     if (tab !== "explorar" || chatFilter || !selectedCategory) {
@@ -83,106 +100,113 @@ export default function HomeTabs({
     return () => {
       cancelled = true;
     };
-  }, [tab, chatFilter, selectedCategory, userId]);
+  }, [tab, chatFilter, selectedCategory, userId, refreshKey]);
 
   const visibleConnectedCards = selectedCategory
-    ? (connectedCards ?? []).filter((c) => c.tag === selectedCategory.label)
+    ? (connectedCards ?? []).filter((c) => c.categoryValues?.includes(selectedCategory.value))
     : connectedCards;
 
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto px-4 py-3">
-      <div className="mb-3 flex gap-1 rounded-xl bg-zinc-100 p-1">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            className={
-              tab === t.key
-                ? "flex-1 rounded-lg bg-white py-1.5 text-xs font-semibold text-mia-ink"
-                : "flex-1 rounded-lg py-1.5 text-xs font-medium text-zinc-500"
-            }
-          >
-            {t.label}
-          </button>
-        ))}
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="shrink-0 px-4 pt-3">
+        <div className="flex gap-1 rounded-xl bg-zinc-100 p-1">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={
+                tab === t.key
+                  ? "flex-1 rounded-lg bg-white py-1.5 text-xs font-semibold text-mia-ink"
+                  : "flex-1 rounded-lg py-1.5 text-xs font-medium text-zinc-500"
+              }
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="mb-3 -mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
-        <button
-          type="button"
-          onClick={() => setSelectedCategory(null)}
-          className={
-            selectedCategory === null
-              ? "shrink-0 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-3 py-1.5 text-xs font-semibold text-white"
-              : "shrink-0 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-mia-ink"
-          }
-        >
-          Todas
-        </button>
-        {(categories ?? []).map((c) => (
+      <div className="shrink-0 overflow-x-auto px-4 pb-2 pt-2">
+        <div className="flex w-max gap-2">
           <button
-            key={c.value}
             type="button"
-            onClick={() => setSelectedCategory(c)}
+            onClick={() => setSelectedCategory(null)}
             className={
-              selectedCategory?.value === c.value
+              selectedCategory === null
                 ? "shrink-0 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-3 py-1.5 text-xs font-semibold text-white"
                 : "shrink-0 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-mia-ink"
             }
           >
-            {c.label}
+            Todas
           </button>
-        ))}
+          {(categories ?? []).map((c) => (
+            <button
+              key={c.value}
+              type="button"
+              onClick={() => setSelectedCategory(c)}
+              className={
+                selectedCategory?.value === c.value
+                  ? "shrink-0 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-3 py-1.5 text-xs font-semibold text-white"
+                  : "shrink-0 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-mia-ink"
+              }
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {tab === "conectados" && (
-        <BenefitGrid
-          cards={visibleConnectedCards ?? []}
-          onSelect={onSelectBenefit}
-          emptyMessage={
-            connectedCards === null
-              ? "Cargando..."
-              : selectedCategory
-                ? "Sin beneficios de tus benefactores en esta categoría todavía."
-                : "Todavía no hay beneficios de tus benefactores conectados en tus ciudades. Conecta más benefactores o ciudades desde el ícono de ajustes."
-          }
-        />
-      )}
+      <div className="flex-1 overflow-y-auto px-4 pb-3">
+        {tab === "conectados" && (
+          <BenefitGrid
+            cards={visibleConnectedCards ?? []}
+            onSelect={onSelectBenefit}
+            emptyMessage={
+              connectedCards === null
+                ? "Cargando..."
+                : selectedCategory
+                  ? "Sin beneficios de tus benefactores en esta categoría todavía."
+                  : "Todavía no hay beneficios de tus benefactores conectados en tus ciudades. Conecta más benefactores o ciudades desde el ícono de ajustes."
+            }
+          />
+        )}
 
-      {tab === "cerca" && (
-        <NearbyList
-          userId={userId}
-          onSelectBenefit={onSelectBenefit}
-          categoryFilter={selectedCategory?.label ?? null}
-        />
-      )}
+        {tab === "cerca" && (
+          <NearbyList
+            userId={userId}
+            onSelectBenefit={onSelectBenefit}
+            categoryFilter={selectedCategory?.value ?? null}
+            refreshKey={refreshKey}
+          />
+        )}
 
-      {tab === "explorar" && (
-        <div className="flex flex-col gap-3">
-          {chatFilter ? (
-            <>
-              <div className="flex w-fit items-center gap-2 rounded-full bg-[#F3E8FE] px-3 py-1.5 text-xs text-mia-violet">
-                <span>{chatFilter.label}</span>
-                <button type="button" onClick={onClearChatFilter} aria-label="Quitar filtro">
-                  ×
-                </button>
-              </div>
-              <BenefitGrid cards={chatFilter.cards} onSelect={onSelectBenefit} emptyMessage="" />
-            </>
-          ) : selectedCategory ? (
-            <BenefitGrid
-              cards={explorarCards ?? []}
-              onSelect={onSelectBenefit}
-              emptyMessage={explorarCards === null ? "Cargando..." : "Sin beneficios en esta categoría todavía"}
-            />
-          ) : (
-            <p className="text-left text-sm text-zinc-500">
-              Elige una categoría arriba, o cuéntale a MIA qué buscas y aparece filtrado aquí
-            </p>
-          )}
-        </div>
-      )}
+        {tab === "explorar" && (
+          <div className="flex flex-col gap-3">
+            {chatFilter ? (
+              <>
+                <div className="flex w-fit items-center gap-2 rounded-full bg-[#F3E8FE] px-3 py-1.5 text-xs text-mia-violet">
+                  <span>{chatFilter.label}</span>
+                  <button type="button" onClick={onClearChatFilter} aria-label="Quitar filtro">
+                    ×
+                  </button>
+                </div>
+                <BenefitGrid cards={chatFilter.cards} onSelect={onSelectBenefit} emptyMessage="" />
+              </>
+            ) : selectedCategory ? (
+              <BenefitGrid
+                cards={explorarCards ?? []}
+                onSelect={onSelectBenefit}
+                emptyMessage={explorarCards === null ? "Cargando..." : "Sin beneficios en esta categoría todavía"}
+              />
+            ) : (
+              <p className="text-left text-sm text-zinc-500">
+                Elige una categoría arriba, o cuéntale a MIA qué buscas y aparece filtrado aquí
+              </p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

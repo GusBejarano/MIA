@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getPosition, haversineKm } from "@/lib/mia/geolocationClient";
 import { NEARBY_HABITUAL_GATE_MESSAGE, NEARBY_EMPTY_STATE_MESSAGE } from "@/lib/mia/copy";
 import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
@@ -20,20 +20,34 @@ export default function NearbyList({
   userId,
   onSelectBenefit,
   categoryFilter,
+  refreshKey,
 }: {
   userId: string;
   onSelectBenefit: (id: string, title: string) => void;
-  /** Categoria elegida en la fila compartida de HomeTabs.tsx - null = todas. */
+  /** VALOR de categoria (no el label) elegido en la fila compartida de HomeTabs.tsx - null = todas. */
   categoryFilter?: string | null;
+  /** Sube al conectar/desconectar un benefactor o agregar/quitar una ciudad (ver MiaHome.tsx) - si el permiso ya estaba concedido, vuelve a pedir los beneficios sin re-pedir el permiso. */
+  refreshKey?: number;
 }) {
   const [locState, setLocState] = useState<LocationState>("before");
   const [cards, setCards] = useState<(NearbyCard & { distanceKm: number })[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lastPosition = useRef<{ lat: number; lng: number } | null>(null);
 
   const visibleCards = categoryFilter
-    ? (cards ?? []).filter((c) => c.tag === categoryFilter)
+    ? (cards ?? []).filter((c) => c.categoryValues?.includes(categoryFilter))
     : (cards ?? []);
+
+  async function fetchNearby(lat: number, lng: number) {
+    const res = await fetch(`/api/mia/onboarding/benefits?userId=${userId}&tab=cerca`);
+    if (!res.ok) throw new Error();
+    const data: { cards: NearbyCard[] } = await res.json();
+    const sorted = data.cards
+      .map((c) => ({ ...c, distanceKm: haversineKm(lat, lng, c.lat, c.lng) }))
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+    setCards(sorted);
+  }
 
   async function requestLocation() {
     setLoading(true);
@@ -42,6 +56,7 @@ export default function NearbyList({
       const pos = await getPosition();
       const lat = pos.coords.latitude;
       const lng = pos.coords.longitude;
+      lastPosition.current = { lat, lng };
 
       // Mejor esfuerzo, no bloqueante - mismo patron que el resto de la app.
       fetch("/api/mia/declare-location", {
@@ -50,13 +65,7 @@ export default function NearbyList({
         body: JSON.stringify({ userId, lat, lng }),
       }).catch(() => {});
 
-      const res = await fetch(`/api/mia/onboarding/benefits?userId=${userId}&tab=cerca`);
-      if (!res.ok) throw new Error();
-      const data: { cards: NearbyCard[] } = await res.json();
-      const sorted = data.cards
-        .map((c) => ({ ...c, distanceKm: haversineKm(lat, lng, c.lat, c.lng) }))
-        .sort((a, b) => a.distanceKm - b.distanceKm);
-      setCards(sorted);
+      await fetchNearby(lat, lng);
       setLocState("granted");
     } catch {
       setLocState("denied");
@@ -64,6 +73,17 @@ export default function NearbyList({
       setLoading(false);
     }
   }
+
+  const isFirstRefresh = useRef(true);
+  useEffect(() => {
+    if (isFirstRefresh.current) {
+      isFirstRefresh.current = false;
+      return;
+    }
+    if (locState !== "granted" || !lastPosition.current) return;
+    fetchNearby(lastPosition.current.lat, lastPosition.current.lng).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
 
   if (locState !== "granted") {
     return (
