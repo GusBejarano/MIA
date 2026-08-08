@@ -522,8 +522,8 @@ export async function getConnectedBenefits(
 }
 
 export type NearbyBenefitCard = BenefitCard & {
-  lat: number;
-  lng: number;
+  /** TODAS las sedes con coordenadas de este beneficio (puede tener varias, ej. Cali y Jamundi a la vez) - el cliente calcula la distancia a CADA una y usa la mas cercana. Antes se guardaba una sola (la primera que encontraba, orden arbitrario) y podia calcular la distancia contra una sede lejana en vez de la que el usuario tenia al lado (bug reportado: "estoy a 0.4km pero no aparece en la lista"). */
+  locations: { lat: number; lng: number }[];
   categoryValues: string[];
   /** Calificacion (1-3) que el propio usuario le puso a ESTE beneficio, o 0 si nunca lo califico - ver ConnectedBenefitCard.rating. */
   rating: number;
@@ -536,12 +536,13 @@ export type NearbyBenefitCard = BenefitCard & {
 /**
  * Beneficios de los benefactores conectados que tienen al menos una sede
  * geolocalizada (lat/lng no nulos) via benefit_location_links - tab "Cerca
- * de ti". No calcula distancia aqui - devuelve las coordenadas y el
- * cliente ordena con haversineKm (geolocationClient.ts) contra la posicion
- * del dispositivo, mismo patron que ya usa DetailSheet.tsx para ordenar
- * sedes por cercania. Beneficios sin coordenadas reales se excluyen del
- * todo (nunca se devuelven al final sin distancia real). Si un beneficio
- * tiene varias sedes, usa la primera con coordenadas.
+ * de ti". No calcula distancia aqui - devuelve TODAS las sedes con
+ * coordenadas de cada beneficio y el cliente calcula/ordena con
+ * haversineKm (geolocationClient.ts) contra la posicion del dispositivo,
+ * usando la mas cercana de cada uno - mismo patron que ya usa
+ * DetailSheet.tsx para ordenar sedes por cercania. Beneficios sin ninguna
+ * coordenada real se excluyen del todo (nunca se devuelven sin distancia
+ * real).
  */
 export async function getNearbyConnectedBenefits(
   programIds: string[],
@@ -574,12 +575,14 @@ export async function getNearbyConnectedBenefits(
   );
   if (coordsByLocationId.size === 0) return [];
 
-  const coordsByBenefit = new Map<string, { lat: number; lng: number }>();
+  const coordsByBenefit = new Map<string, { lat: number; lng: number }[]>();
   for (const link of linkRows) {
     const benefitId = link.benefit_id as string;
-    if (coordsByBenefit.has(benefitId)) continue;
     const coords = coordsByLocationId.get(link.location_id as string);
-    if (coords) coordsByBenefit.set(benefitId, coords);
+    if (!coords) continue;
+    const existing = coordsByBenefit.get(benefitId);
+    if (existing) existing.push(coords);
+    else coordsByBenefit.set(benefitId, [coords]);
   }
   if (coordsByBenefit.size === 0) return [];
 
@@ -605,7 +608,7 @@ export async function getNearbyConnectedBenefits(
   const ownRatingByBenefitId = await getRatingsForBenefits(userId, benefitRows.map((row) => row.id as string));
 
   return benefitRows.map((row) => {
-    const coords = coordsByBenefit.get(row.id as string)!;
+    const locations = coordsByBenefit.get(row.id as string)!;
     const cityList = (row.city_list as string[] | null) ?? [];
     return {
       id: row.id as string,
@@ -613,8 +616,7 @@ export async function getNearbyConnectedBenefits(
       tag: nameById.get(row.source_program_id as string) ?? "",
       sourceProgram: nameById.get(row.source_program_id as string) ?? "",
       thumbUrl: (row.image_url as string) ?? null,
-      lat: coords.lat,
-      lng: coords.lng,
+      locations,
       categoryValues: (row.category_list as string[] | null) ?? [],
       rating: ownRatingByBenefitId[row.id as string] ?? 0,
       cityLabel: buildCityLabel(cityList, userCityValues),

@@ -590,13 +590,15 @@ export type UserProfileDetails = {
   birthDate: string | null;
   whatsappNumber: string | null;
   avatar: AvatarKey;
+  /** users.location_permission_granted - ya se guardaba, pero el tab "Cerca de ti" nunca lo leia de vuelta y volvia a pedir el permiso cada vez (bug reportado). */
+  locationPermissionGranted: boolean;
 };
 
-/** Datos de "Mi perfil" (avatar, campos de aprendizaje de perfil, whatsapp solo-lectura). */
+/** Datos de "Mi perfil" (avatar, campos de aprendizaje de perfil, whatsapp solo-lectura) + permiso de ubicacion ya concedido. */
 export async function getUserProfileDetails(userId: string): Promise<UserProfileDetails> {
   const { data, error } = await supabase
     .from("users")
-    .select("name, gender, birth_date, whatsapp_number, avatar")
+    .select("name, gender, birth_date, whatsapp_number, avatar, location_permission_granted")
     .eq("id", userId)
     .single();
   if (error) {
@@ -607,6 +609,7 @@ export async function getUserProfileDetails(userId: string): Promise<UserProfile
     gender: (data?.gender as string | null) ?? null,
     birthDate: (data?.birth_date as string | null) ?? null,
     whatsappNumber: (data?.whatsapp_number as string | null) ?? null,
+    locationPermissionGranted: Boolean(data?.location_permission_granted),
     avatar: ((data?.avatar as AvatarKey | null) ?? "negro") as AvatarKey,
   };
 }

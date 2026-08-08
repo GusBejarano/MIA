@@ -1,13 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getPosition, haversineKm } from "@/lib/mia/geolocationClient";
+import { getPosition, isGeolocationGranted, haversineKm } from "@/lib/mia/geolocationClient";
 import { NEARBY_HABITUAL_GATE_MESSAGE, NEARBY_EMPTY_STATE_MESSAGE, NEARBY_RADIUS_EMPTY_MESSAGE } from "@/lib/mia/copy";
 import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
 import { Star } from "@/components/mia/RatingStars";
 import type { GridCard } from "@/components/mia-home/BenefitGrid";
 
-type NearbyCard = GridCard & { lat: number; lng: number };
+// Todas las sedes con coordenadas de este beneficio (puede tener varias) -
+// se calcula la distancia a cada una y se usa la mas cercana, ver
+// fetchNearby. Antes solo llegaba una (arbitraria) y podia calcular la
+// distancia contra una sede lejana (bug reportado: "estoy a 0.4km pero no
+// aparece en la lista").
+type NearbyCard = GridCard & { locations: { lat: number; lng: number }[] };
 type LocationState = "before" | "denied" | "granted";
 type MaturityLevel = "explorador" | "habitual" | "frecuente";
 
@@ -60,7 +65,10 @@ export default function NearbyList({
     const data: { cards: NearbyCard[]; maturityLevel?: MaturityLevel } = await res.json();
     setMaturityLevel(data.maturityLevel ?? "explorador");
     const sorted = data.cards
-      .map((c) => ({ ...c, distanceKm: haversineKm(lat, lng, c.lat, c.lng) }))
+      .map((c) => ({
+        ...c,
+        distanceKm: Math.min(...c.locations.map((loc) => haversineKm(lat, lng, loc.lat, loc.lng))),
+      }))
       .sort((a, b) => a.distanceKm - b.distanceKm);
     setCards(sorted);
   }
@@ -89,6 +97,30 @@ export default function NearbyList({
       setLoading(false);
     }
   }
+
+  // Si el usuario ya concedio el permiso antes (users.location_permission_granted
+  // en Supabase, ver store.ts), redetecta en silencio al entrar a este tab -
+  // sin mostrar el boton "Compartir mi ubicacion" de nuevo. Si el navegador
+  // ya no tiene el permiso a nivel de sistema (revocado, otro dispositivo),
+  // isGeolocationGranted() da false y se muestra el boton normal, mismo
+  // patron que la redeteccion silenciosa de MiaChat.tsx.
+  useEffect(() => {
+    fetch(`/api/mia/onboarding/profile?userId=${userId}`)
+      .then((r) => r.json())
+      .then(async (data: { profile?: { locationPermissionGranted?: boolean } }) => {
+        if (!data.profile?.locationPermissionGranted) return;
+        if (!(await isGeolocationGranted())) return;
+        const pos = await getPosition();
+        lastPosition.current = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        await fetchNearby(pos.coords.latitude, pos.coords.longitude);
+        setLocState("granted");
+      })
+      .catch(() => {
+        // Sin permiso silencioso disponible - se queda en "before", el
+        // usuario ve el boton normal.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   const isFirstRefresh = useRef(true);
   useEffect(() => {
