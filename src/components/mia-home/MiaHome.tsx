@@ -28,7 +28,7 @@ type Step = "welcome" | "connect" | "cities" | "tabs";
 // usuario separadas en BD. Union de codigo+numero solo pasa aca, antes de
 // mandarlo al backend - la BD sigue guardando el mismo formato de siempre
 // ("+57..."), sin ningun cambio de esquema.
-const COUNTRY_CODES = [{ code: "+57", label: "🇨🇴 Colombia (+57)" }];
+const COUNTRY_CODES = [{ code: "+57", label: "CO (+57)" }];
 
 // Recuerda phone+userId de este dispositivo (dev 2.5) - a diferencia de
 // REMEMBERED_PHONE_KEY (MiaChat.tsx, solo precarga el input), esto salta
