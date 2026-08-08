@@ -17,11 +17,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const connections = await getUserConnections(userId);
+    const [connections, cities] = await Promise.all([getUserConnections(userId), getUserCities(userId)]);
     const programIds = connections.map((c) => c.programId);
 
     if (tab === "conectados") {
-      const cities = await getUserCities(userId);
       const programPriorities = connections.map((c) => ({
         programId: c.programId,
         prioridad: c.prioridad,
@@ -41,7 +40,7 @@ export async function GET(req: NextRequest) {
     // Sin lat/lng aqui: el cliente ya tiene la posicion (la pidio para
     // mostrar el estado "granted" del tab) y ordena con haversineKm, mismo
     // patron que DetailSheet.tsx para las sedes de un beneficio puntual.
-    const cards = await getNearbyConnectedBenefits(programIds, userId);
+    const cards = await getNearbyConnectedBenefits(programIds, cities, userId);
     return NextResponse.json({ cards, maturityLevel });
   } catch (err) {
     console.error("Error en /api/mia/onboarding/benefits:", err);

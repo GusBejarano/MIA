@@ -1,6 +1,7 @@
 "use client";
 
 import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
+import { Star } from "@/components/mia/RatingStars";
 
 export type GridCard = {
   id: string;
@@ -11,9 +12,23 @@ export type GridCard = {
   connected?: boolean;
   /** Valores normalizados de categoria (category_list) - para el filtro de la fila de categorias de HomeTabs.tsx, nunca para mostrar (eso es `tag`). */
   categoryValues?: string[];
-  /** Calificacion propia (1-3) del usuario para este beneficio, 0 si nunca lo califico - para el filtro "Preferidos" de HomeTabs.tsx. */
+  /** Calificacion propia (1-3) del usuario para este beneficio, 0 si nunca lo califico - para el filtro "Preferidos" y para mostrarla en la tarjeta. */
   rating?: number;
+  /** Ciudad (de tus ciudades de interes) donde aplica este beneficio puntual - Conectados/Cerca de ti mezclan tarjetas de varias ciudades a la vez. */
+  cityLabel?: string;
+  /** "Desde X%" extraido de las condiciones en texto libre - null/undefined si no se detecto ningun porcentaje (no se inventa, simplemente no se muestra el badge). */
+  discountPercent?: number | null;
 };
+
+function RatingRow({ rating }: { rating: number }) {
+  return (
+    <span className="flex items-center gap-0.5">
+      {[1, 2, 3].map((i) => (
+        <Star key={i} filled={rating >= i} size={11} />
+      ))}
+    </span>
+  );
+}
 
 /**
  * Grid responsivo real (auto-fill/minmax) para los tabs del home nuevo
@@ -45,19 +60,30 @@ export default function BenefitGrid({
         >
           <div className="relative h-28 w-full">
             <BenefitThumbnail imageUrl={card.thumbUrl} title={card.title} className="h-full w-full" />
+            {card.discountPercent != null && (
+              <span className="absolute left-1.5 top-1.5 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-2 py-0.5 text-[9px] font-bold text-white shadow-sm">
+                Desde {card.discountPercent}%
+              </span>
+            )}
             {card.connected && (
-              <span className="absolute left-1.5 top-1.5 rounded-full bg-white/90 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-mia-violet shadow-sm">
+              <span className="absolute right-1.5 top-1.5 rounded-full bg-white/90 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-mia-violet shadow-sm">
                 Conectado
               </span>
             )}
           </div>
           <div className="p-2">
-            <span className="mb-0.5 inline-block rounded-full bg-[#F3E8FE] px-2 py-0.5 text-[10px] font-semibold text-mia-violet">
-              {card.tag}
-            </span>
+            <div className="mb-0.5 flex items-center justify-between gap-1">
+              <span className="inline-block truncate rounded-full bg-[#F3E8FE] px-2 py-0.5 text-[10px] font-semibold text-mia-violet">
+                {card.tag}
+              </span>
+              {!!card.rating && <RatingRow rating={card.rating} />}
+            </div>
             <p className="line-clamp-2 text-xs font-medium leading-tight text-mia-ink">
               {card.title}
             </p>
+            {card.cityLabel && (
+              <p className="mt-0.5 truncate text-[10px] text-zinc-400">📍 {card.cityLabel}</p>
+            )}
           </div>
         </button>
       ))}

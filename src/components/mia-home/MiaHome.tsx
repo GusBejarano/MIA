@@ -200,14 +200,18 @@ export default function MiaHome() {
   }
 
   function handleCardCarouselResult(
-    carousel: { cards: { id: string; title: string; tag: string; thumbUrl: string | null }[] },
+    carousel: { cards: { id: string; title: string; tag: string; thumbUrl: string | null; rating?: number }[] },
     queryLabel: string
   ) {
+    // Sin cityLabel/discountPercent aqui: el carrusel del chat (produccion,
+    // sin tocar) no los trae - la tarjeta simplemente no muestra esos dos
+    // badges para resultados de busqueda por chat, degrada con gracia.
     const cards: GridCard[] = carousel.cards.map((c) => ({
       id: c.id,
       title: c.title,
       tag: c.tag,
       thumbUrl: c.thumbUrl,
+      rating: c.rating,
     }));
     setChatFilter({ label: queryLabel, cards });
   }

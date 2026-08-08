@@ -9,15 +9,23 @@ type CategoryOption = { value: string; label: string; count: number };
 export type Filter = { kind: "preferidos" } | { kind: "category"; value: string; label: string };
 
 const TABS: { key: Tab; label: string }[] = [
-  { key: "conectados", label: "Conectados" },
+  { key: "conectados", label: "Mis Beneficios" },
   { key: "cerca", label: "Cerca de ti" },
   { key: "explorar", label: "Explorar" },
 ];
 
 export type ChatFilter = { label: string; cards: GridCard[] };
 
+// "Preferidos": mas estrellas primero, luego mas % de descuento primero
+// (feedback explicito, sexta prueba en vivo) - mismo criterio que ya usa
+// el servidor en getConnectedBenefits, aplicado aqui en el cliente porque
+// Explorar reutiliza connectedCards tal cual sin volver a pedirlo.
 function sortByOwnRating(cards: GridCard[]): GridCard[] {
-  return [...cards].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+  return [...cards].sort((a, b) => {
+    const ratingDiff = (b.rating ?? 0) - (a.rating ?? 0);
+    if (ratingDiff !== 0) return ratingDiff;
+    return (b.discountPercent ?? -1) - (a.discountPercent ?? -1);
+  });
 }
 
 /**

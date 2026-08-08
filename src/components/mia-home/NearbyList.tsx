@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { getPosition, haversineKm } from "@/lib/mia/geolocationClient";
 import { NEARBY_HABITUAL_GATE_MESSAGE, NEARBY_EMPTY_STATE_MESSAGE } from "@/lib/mia/copy";
 import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
+import { Star } from "@/components/mia/RatingStars";
 import type { GridCard } from "@/components/mia-home/BenefitGrid";
 import type { Filter } from "@/components/mia-home/HomeTabs";
 
@@ -43,7 +44,11 @@ export default function NearbyList({
     filter.kind === "preferidos"
       ? [...(cards ?? [])]
           .filter((c) => (c.rating ?? 0) >= 1)
-          .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+          .sort((a, b) => {
+            const ratingDiff = (b.rating ?? 0) - (a.rating ?? 0);
+            if (ratingDiff !== 0) return ratingDiff;
+            return (b.discountPercent ?? -1) - (a.discountPercent ?? -1);
+          })
       : (cards ?? []).filter((c) => c.categoryValues?.includes(filter.value));
 
   async function fetchNearby(lat: number, lng: number) {
@@ -129,14 +134,31 @@ export default function NearbyList({
           >
             <div className="relative h-28 w-full">
               <BenefitThumbnail imageUrl={card.thumbUrl} title={card.title} className="h-full w-full" />
+              {card.discountPercent != null && (
+                <span className="absolute left-1.5 top-1.5 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-2 py-0.5 text-[9px] font-bold text-white shadow-sm">
+                  Desde {card.discountPercent}%
+                </span>
+              )}
             </div>
-            <span className="mx-2 mt-1.5 inline-block w-fit rounded-full bg-[#F3E8FE] px-2 py-0.5 text-[10px] font-semibold text-mia-violet">
-              {card.tag}
-            </span>
+            <div className="mx-2 mt-1.5 flex items-center justify-between gap-1">
+              <span className="inline-block truncate rounded-full bg-[#F3E8FE] px-2 py-0.5 text-[10px] font-semibold text-mia-violet">
+                {card.tag}
+              </span>
+              {!!card.rating && (
+                <span className="flex items-center gap-0.5">
+                  {[1, 2, 3].map((i) => (
+                    <Star key={i} filled={card.rating! >= i} size={11} />
+                  ))}
+                </span>
+              )}
+            </div>
             <p className="line-clamp-2 px-2 pt-0.5 text-xs font-medium leading-tight text-mia-ink">
               {card.title}
             </p>
-            <p className="px-2 pb-2 text-[11px] font-semibold text-mia-violet">
+            {card.cityLabel && (
+              <p className="px-2 pt-0.5 text-[10px] text-zinc-400">📍 {card.cityLabel}</p>
+            )}
+            <p className="px-2 pb-2 pt-0.5 text-[11px] font-semibold text-mia-violet">
               {card.distanceKm < 1
                 ? `${Math.round(card.distanceKm * 1000)} m`
                 : `${card.distanceKm.toFixed(1)} km`}

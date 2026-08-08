@@ -175,11 +175,19 @@ export default function DetailSheet({
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative z-10 max-h-[85vh] w-full overflow-y-auto rounded-t-3xl bg-white sm:max-w-sm sm:rounded-3xl">
-        <div className="mx-auto mt-2.5 h-1 w-9 rounded-full bg-zinc-200 sm:hidden" />
-        <div className="absolute right-4 top-4">
+      {/* El boton de cerrar vive en este envoltorio de AFUERA (no hace
+          scroll) en vez de adentro del panel scrolleable - si estuviera
+          adentro (como antes), se iba de la vista apenas la persona
+          bajaba a ver las sedes de un beneficio con mucho contenido (bug
+          reportado: "no se visualiza la opcion de cerrar"). Asi queda
+          fijo en la esquina sin importar cuanto se haya scrolleado. */}
+      <div className="relative z-10 max-h-[85vh] w-full sm:max-w-sm">
+        <div className="absolute right-4 top-4 z-20">
           <CloseButton onClick={onClose} variant="floating" />
         </div>
+
+        <div className="max-h-[85vh] overflow-y-auto rounded-t-3xl bg-white sm:rounded-3xl">
+        <div className="mx-auto mt-2.5 h-1 w-9 rounded-full bg-zinc-200 sm:hidden" />
 
         <div className="mx-4 mt-4">
           <BenefitThumbnail
@@ -344,6 +352,7 @@ export default function DetailSheet({
               )}
             </div>
           )}
+        </div>
         </div>
       </div>
     </div>

@@ -2,6 +2,27 @@ import { supabase } from "./supabaseClient";
 import { colorForString } from "./colorPalette";
 import { getRatingsForBenefits } from "./store";
 
+/**
+ * % de descuento "desde" (el mas bajo de los que aparezcan) extraido del
+ * texto libre de `conditions` - NO hay ningun campo estructurado de
+ * descuento en el esquema (confirmado: benefits no tiene discount_percent
+ * ni nada parecido, ni siquiera en raw_data). Heuristica de mejor
+ * esfuerzo: busca todos los "N%" del texto y devuelve el minimo (criterio
+ * "desde" - nunca promete de mas). Si el beneficio no tiene ningun
+ * porcentaje en el texto (ej. "2x1", "domicilio gratis"), devuelve null y
+ * la tarjeta simplemente no muestra el badge - nunca se inventa un numero.
+ */
+export function extractMinDiscountPercent(conditions: string | null): number | null {
+  if (!conditions) return null;
+  const matches = conditions.match(/\d{1,3}\s*%/g);
+  if (!matches) return null;
+  const values = matches
+    .map((m) => parseInt(m, 10))
+    .filter((n) => Number.isFinite(n) && n > 0 && n <= 100);
+  if (values.length === 0) return null;
+  return Math.min(...values);
+}
+
 // Color de benefactor/programa deterministico por id - no podemos
 // hardcodear un color por nombre porque la lista de benefactores crece con
 // el tiempo (hoy 1, manana pueden ser 100). Paleta compartida en
@@ -359,6 +380,10 @@ export type ConnectedBenefitCard = BenefitCard & {
   categoryValues: string[];
   /** Calificacion (1-3) que el propio usuario le puso a ESTE beneficio, o 0 si nunca lo califico - misma fuente que benefit_ratings/DetailSheet.tsx. Usada por el filtro "Preferidos" de HomeTabs.tsx. */
   rating: number;
+  /** Ciudad (de las ciudades de interes del usuario) donde este beneficio aplica - un beneficio puede tener varias, se muestra la primera que coincida. Nunca la ciudad "activa" de la app entera: Conectados mezcla tarjetas de todas las ciudades de interes a la vez. */
+  cityLabel: string;
+  /** "Desde X%" extraido de las condiciones en texto libre - ver extractMinDiscountPercent. null si el beneficio no trae ningun porcentaje detectable (no es un error, simplemente no se muestra el badge). */
+  discountPercent: number | null;
 };
 
 /**
@@ -376,16 +401,15 @@ export type ConnectedBenefitCard = BenefitCard & {
  * comparar texto de `tag` contra la categoria (bug real: `tag` nunca fue la
  * categoria, el filtro no filtraba nada).
  *
- * Ordenado por dos niveles: primero la prioridad (1-3 estrellas) que el
- * usuario le dio a cada benefactor en "Mis conexiones" (ver
- * UserConnection.prioridad en store.ts), y dentro de un mismo benefactor,
- * por la calificacion (1-3 estrellas) que el usuario le puso a ESE
- * beneficio puntual (benefit_ratings, la misma que se ve en el detalle) -
- * un beneficio que el usuario ya califico bien sube al principio de su
- * benefactor. Esto es exclusivo de este tab: NO toca getBenefitsForCategory
- * (el catalogo por categoria que tambien usa el carrusel del chat de
- * produccion), que tiene su propio orden por calificacion sin relacion con
- * esto.
+ * Ordenado por tres niveles (feedback explicito, sexta prueba en vivo):
+ * primero la calificacion propia del beneficio (1-3 estrellas, mas alta
+ * primero, sin calificar = 0 al final), luego el % de descuento "desde"
+ * (mas alto primero), y solo como ultimo desempate la prioridad (1-3
+ * estrellas) que el usuario le dio al BENEFACTOR completo en "Mis
+ * conexiones" (ver UserConnection.prioridad en store.ts). Esto es
+ * exclusivo de este tab: NO toca getBenefitsForCategory (el catalogo por
+ * categoria que tambien usa el carrusel del chat de produccion), que
+ * tiene su propio orden sin relacion con esto.
  */
 export async function getConnectedBenefits(
   programPriorities: ProgramPriority[],
@@ -395,6 +419,7 @@ export async function getConnectedBenefits(
   if (programPriorities.length === 0 || cityValues.length === 0) return [];
   const programIds = programPriorities.map((p) => p.programId);
   const priorityById = new Map(programPriorities.map((p) => [p.programId, p.prioridad]));
+  const userCityValues = new Set(cityValues);
 
   const scopeKeysByCity = await Promise.all(
     cityValues.map((city) => supabase.rpc("resolve_city_scope", { target_city: city }))
@@ -409,7 +434,7 @@ export async function getConnectedBenefits(
 
   const { data, error } = await supabase
     .from("benefits")
-    .select("id, title, source_program_id, image_url, category_list")
+    .select("id, title, source_program_id, image_url, category_list, city_list, display_city_list, conditions")
     .eq("status", "activo")
     .in("source_program_id", programIds)
     .overlaps("city_list", scopeKeys);
@@ -428,15 +453,24 @@ export async function getConnectedBenefits(
 
   const ownRatingByBenefitId = await getRatingsForBenefits(userId, (data ?? []).map((row) => row.id as string));
 
-  const cards: ConnectedBenefitCard[] = (data ?? []).map((row) => ({
-    id: row.id as string,
-    title: row.title as string,
-    tag: nameById.get(row.source_program_id as string) ?? "",
-    sourceProgram: nameById.get(row.source_program_id as string) ?? "",
-    thumbUrl: (row.image_url as string) ?? null,
-    categoryValues: (row.category_list as string[] | null) ?? [],
-    rating: ownRatingByBenefitId[row.id as string] ?? 0,
-  }));
+  const cards: ConnectedBenefitCard[] = (data ?? []).map((row) => {
+    const cityList = (row.city_list as string[] | null) ?? [];
+    const displayCityList = (row.display_city_list as string[] | null) ?? [];
+    const matchedIndex = cityList.findIndex((c) => userCityValues.has(c));
+    const cityLabel =
+      (matchedIndex >= 0 ? displayCityList[matchedIndex] : displayCityList[0]) ?? "Nacional";
+    return {
+      id: row.id as string,
+      title: row.title as string,
+      tag: nameById.get(row.source_program_id as string) ?? "",
+      sourceProgram: nameById.get(row.source_program_id as string) ?? "",
+      thumbUrl: (row.image_url as string) ?? null,
+      categoryValues: (row.category_list as string[] | null) ?? [],
+      rating: ownRatingByBenefitId[row.id as string] ?? 0,
+      cityLabel,
+      discountPercent: extractMinDiscountPercent(row.conditions as string | null),
+    };
+  });
   const priorityByBenefitId = new Map(
     (data ?? []).map((row) => [
       row.id as string,
@@ -445,9 +479,11 @@ export async function getConnectedBenefits(
   );
 
   return cards.sort((a, b) => {
-    const priorityDiff = (priorityByBenefitId.get(b.id) ?? 1) - (priorityByBenefitId.get(a.id) ?? 1);
-    if (priorityDiff !== 0) return priorityDiff;
-    return b.rating - a.rating;
+    const ratingDiff = b.rating - a.rating;
+    if (ratingDiff !== 0) return ratingDiff;
+    const discountDiff = (b.discountPercent ?? -1) - (a.discountPercent ?? -1);
+    if (discountDiff !== 0) return discountDiff;
+    return (priorityByBenefitId.get(b.id) ?? 1) - (priorityByBenefitId.get(a.id) ?? 1);
   });
 }
 
@@ -457,6 +493,10 @@ export type NearbyBenefitCard = BenefitCard & {
   categoryValues: string[];
   /** Calificacion (1-3) que el propio usuario le puso a ESTE beneficio, o 0 si nunca lo califico - ver ConnectedBenefitCard.rating. */
   rating: number;
+  /** Ver ConnectedBenefitCard.cityLabel. */
+  cityLabel: string;
+  /** Ver ConnectedBenefitCard.discountPercent. */
+  discountPercent: number | null;
 };
 
 /**
@@ -471,9 +511,11 @@ export type NearbyBenefitCard = BenefitCard & {
  */
 export async function getNearbyConnectedBenefits(
   programIds: string[],
+  cityValues: string[],
   userId: string
 ): Promise<NearbyBenefitCard[]> {
   if (programIds.length === 0) return [];
+  const userCityValues = new Set(cityValues);
 
   const { data: linkRows, error: linkError } = await supabase
     .from("benefit_location_links")
@@ -509,7 +551,7 @@ export async function getNearbyConnectedBenefits(
 
   const { data: benefitRows, error: benefitsError } = await supabase
     .from("benefits")
-    .select("id, title, source_program_id, image_url, category_list")
+    .select("id, title, source_program_id, image_url, category_list, city_list, display_city_list, conditions")
     .eq("status", "activo")
     .in("source_program_id", programIds)
     .in("id", [...coordsByBenefit.keys()]);
@@ -530,6 +572,11 @@ export async function getNearbyConnectedBenefits(
 
   return benefitRows.map((row) => {
     const coords = coordsByBenefit.get(row.id as string)!;
+    const cityList = (row.city_list as string[] | null) ?? [];
+    const displayCityList = (row.display_city_list as string[] | null) ?? [];
+    const matchedIndex = cityList.findIndex((c) => userCityValues.has(c));
+    const cityLabel =
+      (matchedIndex >= 0 ? displayCityList[matchedIndex] : displayCityList[0]) ?? "Nacional";
     return {
       id: row.id as string,
       title: row.title as string,
@@ -540,6 +587,8 @@ export async function getNearbyConnectedBenefits(
       lng: coords.lng,
       categoryValues: (row.category_list as string[] | null) ?? [],
       rating: ownRatingByBenefitId[row.id as string] ?? 0,
+      cityLabel,
+      discountPercent: extractMinDiscountPercent(row.conditions as string | null),
     };
   });
 }
