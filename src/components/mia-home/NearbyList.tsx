@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getPosition, isGeolocationGranted, haversineKm } from "@/lib/mia/geolocationClient";
+import { getPosition, haversineKm } from "@/lib/mia/geolocationClient";
 import { NEARBY_HABITUAL_GATE_MESSAGE, NEARBY_EMPTY_STATE_MESSAGE, NEARBY_RADIUS_EMPTY_MESSAGE } from "@/lib/mia/copy";
 import BenefitThumbnail from "@/components/mia/BenefitThumbnail";
 import { Star } from "@/components/mia/RatingStars";
@@ -33,7 +33,8 @@ function formatDistance(km: number): string {
  *
  * - Explorador (este archivo, escenario activo hoy): sin mapa, texto
  *   informativo + slider de radio (100-1000 m, pasos de 100) + lista
- *   ordenada por distancia. Toggle local "Todos"/"Favoritos" (favorito =
+ *   ordenada por distancia. Toggle local "Preferidos"/"Todos" (mismo orden
+ *   y estilo de pildora que el filtro de "Mis Beneficios" - preferido =
  *   al menos 1 estrella propia, misma calificacion de benefit_ratings que
  *   ya existe - NO hay filtro de categoria en este tab).
  * - Habitual: mapa real con pines - placeholder por ahora (decision
@@ -100,16 +101,18 @@ export default function NearbyList({
 
   // Si el usuario ya concedio el permiso antes (users.location_permission_granted
   // en Supabase, ver store.ts), redetecta en silencio al entrar a este tab -
-  // sin mostrar el boton "Compartir mi ubicacion" de nuevo. Si el navegador
-  // ya no tiene el permiso a nivel de sistema (revocado, otro dispositivo),
-  // isGeolocationGranted() da false y se muestra el boton normal, mismo
-  // patron que la redeteccion silenciosa de MiaChat.tsx.
+  // sin mostrar el boton "Compartir mi ubicacion" de nuevo. Va directo a
+  // getPosition() cuando la BD dice que ya esta concedido (mismo patron que
+  // DetailSheet.tsx) - NO se pre-valida con la Permissions API
+  // (isGeolocationGranted): en varios navegadores/dispositivos esa consulta
+  // da falso negativo aunque el permiso siga activo (bug reportado: volvia a
+  // pedir el permiso en cada entrada a la pestaña). getPosition() ya
+  // degrada solo si el permiso de verdad fue revocado.
   useEffect(() => {
     fetch(`/api/mia/onboarding/profile?userId=${userId}`)
       .then((r) => r.json())
       .then(async (data: { profile?: { locationPermissionGranted?: boolean } }) => {
         if (!data.profile?.locationPermissionGranted) return;
-        if (!(await isGeolocationGranted())) return;
         const pos = await getPosition();
         lastPosition.current = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         await fetchNearby(pos.coords.latitude, pos.coords.longitude);
@@ -182,28 +185,32 @@ export default function NearbyList({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex w-fit gap-1 rounded-xl bg-zinc-100 p-1">
-        <button
-          type="button"
-          onClick={() => setFavoritesOnly(false)}
-          className={
-            !favoritesOnly
-              ? "rounded-lg bg-white px-4 py-1.5 text-xs font-semibold text-mia-ink"
-              : "rounded-lg px-4 py-1.5 text-xs font-medium text-zinc-500"
-          }
-        >
-          Todos
-        </button>
+      {/* Mismo estilo de pildora (gradiente activo / borde inactivo) y mismo
+          padding (pt-2 pb-2) que la fila de filtro compartida de "Mis
+          Beneficios"/"Explorar" en HomeTabs.tsx - este tab no la reutiliza
+          (no tiene filtro de categoria), pero debe verse igual. */}
+      <div className="flex w-max gap-2 pt-2 pb-2">
         <button
           type="button"
           onClick={() => setFavoritesOnly(true)}
           className={
             favoritesOnly
-              ? "rounded-lg bg-white px-4 py-1.5 text-xs font-semibold text-mia-ink"
-              : "rounded-lg px-4 py-1.5 text-xs font-medium text-zinc-500"
+              ? "shrink-0 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-3 py-1.5 text-xs font-semibold text-white"
+              : "shrink-0 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-mia-ink"
           }
         >
-          ★ Favoritos
+          ★ Preferidos
+        </button>
+        <button
+          type="button"
+          onClick={() => setFavoritesOnly(false)}
+          className={
+            !favoritesOnly
+              ? "shrink-0 rounded-full bg-gradient-to-r from-mia-violet to-mia-cyan px-3 py-1.5 text-xs font-semibold text-white"
+              : "shrink-0 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-mia-ink"
+          }
+        >
+          Todos
         </button>
       </div>
 
