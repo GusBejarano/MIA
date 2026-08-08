@@ -840,16 +840,20 @@ export class OnboardingSession {
       getLastBusinessSearchAt(this.userId!),
     ]);
 
-    await saveExposure(this.userId!, benefitId);
-
-    const reply = await this.emit(
-      `El usuario quiere ver el detalle de "${detail.title}". Dale una intro breve y natural (una sola frase) - el detalle completo se lo muestra la tarjeta, no lo repitas en texto.`
-    );
-
-    const rating = await getRating(this.userId!, benefitId);
-
+    // Ninguna de estas 6 depende del resultado de otra (emit solo lee
+    // this.history ANTES de llamar y lo actualiza DESPUES, sin tocar nada
+    // de lo que leen las demas) - antes corrian en secuencia, con la
+    // llamada a Claude (la mas lenta, un turno completo de LLM) bloqueando
+    // 4 consultas a Supabase que no la necesitaban para nada. Diagnostico
+    // en vivo (dev 2.5): "por que se demora tanto el detalle" - no eran
+    // indices/vistas/consultas, era este bloqueo innecesario.
     const { sourceProgramId, ...detailRest } = detail;
-    const [programNames, userProgramIds, sedes] = await Promise.all([
+    const [, reply, rating, programNames, userProgramIds, sedes] = await Promise.all([
+      saveExposure(this.userId!, benefitId),
+      this.emit(
+        `El usuario quiere ver el detalle de "${detail.title}". Dale una intro breve y natural (una sola frase) - el detalle completo se lo muestra la tarjeta, no lo repitas en texto.`
+      ),
+      getRating(this.userId!, benefitId),
       getProgramNamesByIds([sourceProgramId]),
       getUserProgramIds(this.userId!),
       getBenefitLocations(benefitId, this.profile.city ?? ""),

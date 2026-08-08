@@ -32,12 +32,15 @@ export default function DetailSheet({
   userId,
   onClose,
   onLocationGranted,
+  onRatingChanged,
 }: {
   message: DetailSheetMessage;
   userId?: string;
   onClose: () => void;
   /** Se llama la primera vez que el usuario autoriza ubicacion desde la seccion de sedes, para que quien renderiza el chat actualice su propio estado de sesion - si no, un beneficio distinto visto despues en la misma sesion seguiria pensando que no hay permiso (el permiso ya quedo guardado en la BD, pero el estado del cliente viaja de turno en turno tal cual se lo mandan). */
   onLocationGranted?: () => void;
+  /** Se llama despues de guardar una calificacion nueva - el home nuevo (dev 2.5) lo usa para invalidar su cache de "Conectados"/"Preferidos", que de otro modo quedaria desactualizado hasta el proximo cambio de conexiones (bug reportado: calificar un beneficio no lo hacia aparecer en Preferidos). */
+  onRatingChanged?: () => void;
 }) {
   const [rating, setRating] = useState(message.rating);
   const [hasRelation, setHasRelation] = useState(message.relation.hasRelation);
@@ -117,6 +120,7 @@ export default function DetailSheet({
         body: JSON.stringify({ userId, benefitId: message.id, rating: next }),
       });
       if (!res.ok) throw new Error("No se pudo guardar la calificacion");
+      onRatingChanged?.();
     } catch (err) {
       console.error("No se pudo guardar la calificacion:", err);
       setRating(previous);

@@ -147,12 +147,15 @@ export default function ChatPanel({
   initialState,
   initialReply,
   onCardCarouselResult,
+  onRatingChanged,
 }: {
   phone: string;
   initialState: ClientState;
   initialReply: { reply: string; ui: UiMessage[]; navLinks?: NavLink[] };
   /** Home nuevo (dev 2.5): cuando una respuesta de MIA trae un card_carousel, se refleja como filtro (removible, solo de esta sesion) en el tab Explorar - ver HomeTabs.tsx. */
   onCardCarouselResult?: (carousel: CardCarouselMessage, queryLabel: string) => void;
+  /** Home nuevo (dev 2.5): se lo pasa tal cual a DetailSheet - ver su prop del mismo nombre. */
+  onRatingChanged?: () => void;
 }) {
   const [sessionState, setSessionState] = useState<ClientState>(initialState);
   const [messages, setMessages] = useState<RenderMessage[]>(() => [
@@ -413,6 +416,7 @@ export default function ChatPanel({
           onLocationGranted={() =>
             setSessionState((s) => ({ ...s, profile: { ...s.profile, locationPermissionGranted: true } }))
           }
+          onRatingChanged={onRatingChanged}
         />
       )}
     </div>

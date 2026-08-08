@@ -32,12 +32,15 @@ export default function ChatOverlay({
   isOpen,
   onOpenChange,
   onCardCarouselResult,
+  onRatingChanged,
 }: {
   phone: string;
   bootstrap: ChatBootstrap | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onCardCarouselResult?: (carousel: CardCarouselMessage, queryLabel: string) => void;
+  /** Calificar un beneficio desde el detalle abierto DENTRO del chat tambien debe invalidar el cache de Conectados/Preferidos - ver DetailSheet.tsx. */
+  onRatingChanged?: () => void;
 }) {
   return (
     <>
@@ -68,6 +71,7 @@ export default function ChatOverlay({
                 initialState={bootstrap.state}
                 initialReply={{ reply: bootstrap.reply, ui: bootstrap.ui, navLinks: bootstrap.navLinks }}
                 onCardCarouselResult={onCardCarouselResult}
+                onRatingChanged={onRatingChanged}
               />
             ) : (
               <div className="flex flex-1 items-center justify-center text-sm text-zinc-400">

@@ -61,10 +61,11 @@ export default function MiaHome() {
   const [cities, setCities] = useState<string[]>([]);
   const [topBenefactor, setTopBenefactor] = useState<{ name: string; extraCount: number } | null>(null);
   const [avatar, setAvatar] = useState<AvatarKey>("negro");
-  // Sube cada vez que se cierra "Mis conexiones" - HomeTabs usa esto para
-  // volver a pedir los beneficios (conectar/desconectar un benefactor o
-  // agregar/quitar una ciudad debe reflejarse de una vez, no solo en el
-  // proximo refresco de pagina).
+  // Sube cada vez que algo que afecta "Conectados"/"Preferidos" cambia:
+  // cerrar "Mis conexiones" (conectar/desconectar benefactor, agregar/
+  // quitar ciudad) o calificar un beneficio con estrellas - HomeTabs.tsx
+  // usa esto para volver a pedir los beneficios, nunca quedan
+  // desactualizados hasta el proximo refresco de pagina.
   const [connectionsVersion, setConnectionsVersion] = useState(0);
 
   // Ciudad(es), benefactor con mas estrellas (para el pill del header, ver
@@ -356,6 +357,7 @@ export default function MiaHome() {
               b ? { ...b, state: { ...b.state, profile: { ...b.state.profile, locationPermissionGranted: true } } } : b
             )
           }
+          onRatingChanged={() => setConnectionsVersion((v) => v + 1)}
         />
       )}
 
@@ -365,6 +367,7 @@ export default function MiaHome() {
         isOpen={chatOverlayOpen}
         onOpenChange={setChatOverlayOpen}
         onCardCarouselResult={handleCardCarouselResult}
+        onRatingChanged={() => setConnectionsVersion((v) => v + 1)}
       />
 
       {connectionsOpen && (
