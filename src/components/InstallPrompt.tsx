@@ -102,7 +102,18 @@ export default function InstallPrompt() {
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)]">
-      <div className="flex w-full max-w-md items-center gap-3 rounded-2xl border border-zinc-200 bg-white p-3 shadow-lg">
+      <div
+        className={
+          // iOS: borde punteado (nunca solido con sombra fuerte, ese estilo
+          // se ve igual de "tocable" que el de Android, que si tiene boton
+          // real - confirmado en vivo: la persona tocaba este mensaje
+          // esperando que instalara solo). Es un aviso, no un boton -
+          // sin onClick en el bloque de iOS, a proposito.
+          platform === "android"
+            ? "flex w-full max-w-md items-center gap-3 rounded-2xl border border-zinc-200 bg-white p-3 shadow-lg"
+            : "flex w-full max-w-md items-center gap-3 rounded-2xl border-2 border-dashed border-zinc-200 bg-white p-3"
+        }
+      >
         <Image
           src="/logo/mia-icon.png"
           alt=""
@@ -126,12 +137,20 @@ export default function InstallPrompt() {
             </button>
           </>
         ) : (
-          <div className="flex-1 text-sm text-mia-ink">
-            <p className="font-semibold">Instala MIA en tu iPhone</p>
-            <p className="text-zinc-500">
-              Toca <ShareIcon /> y luego &quot;Agregar a inicio&quot;.
-            </p>
-          </div>
+          <>
+            <div className="flex-1 text-sm text-mia-ink">
+              <p className="font-semibold">Instala MIA en tu iPhone</p>
+              <p className="text-zinc-500">
+                Toca <ShareIcon /> abajo en Safari y luego &quot;Agregar a inicio&quot;
+              </p>
+            </div>
+            {/* Flecha animada señalando hacia la barra real de Safari,
+                justo debajo de este aviso - este mensaje no es tocable, la
+                accion real vive fuera de la pagina, en el navegador. */}
+            <span className="shrink-0 animate-bounce text-xl text-mia-violet" aria-hidden>
+              ↓
+            </span>
+          </>
         )}
 
         <button

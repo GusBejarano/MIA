@@ -24,6 +24,21 @@
   }
 }
 
+/* iOS/Safari (no Android/Chrome ni escritorio - propiedad exclusiva de
+   WebKit, otros motores la ignoran sin efecto) infla automaticamente el
+   tamano de fuente en ciertos layouts para legibilidad ("font boosting").
+   Como los grids de tarjetas (BenefitGrid.tsx/NearbyList.tsx) usan
+   minmax(9.5rem, 1fr) para decidir cuantas columnas caben, ese inflado
+   empuja el ancho minimo real por encima del disponible en un iPhone y el
+   grid colapsa a 1 columna en vez de 2 (reportado: "en Android se ve
+   perfecto a 2 columnas, en iOS a 1 sola y la imagen se ve fea" - la
+   imagen se ve mal justamente porque queda estirada al doble de ancho).
+   Fix estandar recomendado por WebKit/MDN para este caso exacto. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
