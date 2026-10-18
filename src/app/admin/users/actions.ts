@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getCurrentAdminUser } from "@/lib/admin/currentAdminUser";
+import { requireAdminRole } from "@/lib/admin/guards";
 import { supabase } from "@/lib/mia/supabaseClient";
 
 export async function inviteAdminUserAction(
@@ -10,9 +10,12 @@ export async function inviteAdminUserAction(
 ): Promise<{ error?: string } | undefined> {
   // Re-chequeo de rol en el propio server action (no solo ocultar el boton
   // en la UI) - un Server Action se puede invocar directo sin pasar por la
-  // pantalla que lo oculta.
-  const currentUser = await getCurrentAdminUser();
-  if (!currentUser || currentUser.role !== "admin") {
+  // pantalla que lo oculta. Desde Admin v2.3 (item S1) el guard es el
+  // compartido de @/lib/admin/guards, pero aqui se traduce a un mensaje en
+  // el formulario en vez de propagar la excepcion.
+  try {
+    await requireAdminRole();
+  } catch {
     return { error: "No tienes permiso para crear usuarios." };
   }
 
@@ -50,19 +53,11 @@ export async function inviteAdminUserAction(
   return undefined;
 }
 
-async function requireAdminCaller() {
-  const currentUser = await getCurrentAdminUser();
-  if (!currentUser || currentUser.role !== "admin") {
-    throw new Error("No tienes permiso para administrar usuarios.");
-  }
-  return currentUser;
-}
-
 export async function updateUserRoleAction(
   userId: string,
   role: "admin" | "analista"
 ): Promise<void> {
-  const currentUser = await requireAdminCaller();
+  const currentUser = await requireAdminRole();
   if (currentUser.id === userId) {
     throw new Error("No puedes cambiar tu propio rol.");
   }
@@ -75,7 +70,7 @@ export async function updateUserRoleAction(
 /** No se borra el registro (regla 15/17 de v2.1) - se desactiva, para no
  * perder el historial de tareas/auditorias que haya hecho ese usuario. */
 export async function setUserActiveAction(userId: string, isActive: boolean): Promise<void> {
-  const currentUser = await requireAdminCaller();
+  const currentUser = await requireAdminRole();
   if (currentUser.id === userId) {
     throw new Error("No puedes desactivar tu propia cuenta.");
   }

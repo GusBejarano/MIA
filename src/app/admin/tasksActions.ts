@@ -1,7 +1,13 @@
 "use server";
 
-import { getCurrentAdminUser, type CurrentAdminUser } from "@/lib/admin/currentAdminUser";
 import { supabase } from "@/lib/mia/supabaseClient";
+// Re-chequeo real del lado del servidor (regla 14 de v2.1): un analista
+// solo puede ver/tocar sus propias tareas, sin importar si manipula la
+// URL. Esto no se puede hacer con RLS aqui (todo el proyecto usa el
+// cliente service_role, que ignora RLS siempre) - el chequeo vive en el
+// Server Action. Desde Admin v2.3 (item S1) los guards son unos solos
+// para todo el panel, en @/lib/admin/guards.
+import { requireAdminRole, requireAdminUser, requireTaskAccess } from "@/lib/admin/guards";
 import {
   createTask,
   listTasksForAdmin,
@@ -10,41 +16,6 @@ import {
   type AdminTaskSummary,
   type TaskDetail,
 } from "@/lib/admin/tasks";
-
-async function requireAdminUser(): Promise<CurrentAdminUser> {
-  const user = await getCurrentAdminUser();
-  if (!user) throw new Error("No autenticado.");
-  return user;
-}
-
-async function requireAdminRole(): Promise<CurrentAdminUser> {
-  const user = await requireAdminUser();
-  if (user.role !== "admin") throw new Error("No tienes permiso para esta acción.");
-  return user;
-}
-
-/**
- * Re-chequeo real del lado del servidor (regla 14 de v2.1) - un analista
- * solo puede ver/tocar sus propias tareas, sin importar si manipula la
- * URL: esto no se puede hacer con RLS aqui (todo el proyecto usa el
- * cliente service_role, que ignora RLS siempre) - el chequeo vive en el
- * Server Action, mismo patron que requireAdminUser en catalogActions.ts.
- */
-async function requireTaskAccess(taskId: string): Promise<CurrentAdminUser> {
-  const user = await requireAdminUser();
-  if (user.role === "admin") return user;
-
-  const { data: task, error } = await supabase
-    .from("admin_tasks")
-    .select("assigned_to")
-    .eq("id", taskId)
-    .maybeSingle();
-  if (error) throw new Error(`No se pudo verificar la tarea: ${error.message}`);
-  if (!task || task.assigned_to !== user.id) {
-    throw new Error("No tienes acceso a esta tarea.");
-  }
-  return user;
-}
 
 export async function createTaskAction(
   programId: string,

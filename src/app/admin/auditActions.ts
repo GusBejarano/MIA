@@ -1,6 +1,6 @@
 "use server";
 
-import { getCurrentAdminUser } from "@/lib/admin/currentAdminUser";
+import { requireAdminRole, requireBenefitAccess } from "@/lib/admin/guards";
 import {
   getAuditStatus,
   getAuditStatusBulk,
@@ -8,26 +8,23 @@ import {
   type BenefitAuditInfo,
 } from "@/lib/admin/audit";
 
-async function requireAdminUser() {
-  const user = await getCurrentAdminUser();
-  if (!user) throw new Error("No autenticado.");
-  return user;
-}
-
 export async function getAuditStatusAction(benefitId: string): Promise<BenefitAuditInfo> {
-  await requireAdminUser();
+  await requireBenefitAccess(benefitId);
   return getAuditStatus(benefitId);
 }
 
+/** Version bulk del grid del Catalogo, que es una pantalla solo de admin - la cola
+ * del analista no pasa por aqui: su estado de auditoria lo arma getTaskDetail en el
+ * servidor, ya acotado a los beneficios de su tarea (ver src/lib/admin/tasks.ts). */
 export async function getAuditStatusBulkAction(
   benefitIds: string[]
 ): Promise<Record<string, BenefitAuditInfo>> {
-  await requireAdminUser();
+  await requireAdminRole();
   const map = await getAuditStatusBulk(benefitIds);
   return Object.fromEntries(map);
 }
 
 export async function markBenefitAuditedAction(benefitId: string, taskId?: string): Promise<void> {
-  const user = await requireAdminUser();
+  const user = await requireBenefitAccess(benefitId);
   return markBenefitAudited(benefitId, user.id, taskId);
 }

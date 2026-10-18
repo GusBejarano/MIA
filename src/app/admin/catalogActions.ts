@@ -1,6 +1,12 @@
 "use server";
 
-import { getCurrentAdminUser } from "@/lib/admin/currentAdminUser";
+import {
+  requireAdminRole,
+  requireAnyTaskAccess,
+  requireBenefitAccess,
+  requireLocationAccess,
+  requireMerchantAccess,
+} from "@/lib/admin/guards";
 import { getBenefitLocations, type BenefitLocation } from "@/lib/mia/discovery";
 import {
   listBenefitsForAdmin,
@@ -23,22 +29,25 @@ import {
   type LocationInput,
 } from "@/lib/admin/catalog";
 
-async function requireAdminUser() {
-  const user = await getCurrentAdminUser();
-  if (!user) throw new Error("No autenticado.");
-  return user;
-}
+// Guards por accion (Admin v2.3, item S1 - antes todas pedian solo sesion
+// activa, no rol). La matriz completa esta en docs/ADMIN.md:
+//   - requireAdminRole      -> listado completo del catalogo
+//   - requireBenefitAccess  -> acciones sobre UN beneficio concreto
+//   - requireMerchantAccess -> acciones que solo traen merchantId
+//   - requireLocationAccess -> acciones que solo traen locationId
+//   - requireAnyTaskAccess  -> acciones sin entidad propia que resolver
 
+/** Catalogo completo de un benefactor en una ciudad - solo admin (el analista entra por "Mis tareas"). */
 export async function loadBenefitsAction(
   programId: string,
   city: string
 ): Promise<AdminBenefitCard[]> {
-  await requireAdminUser();
+  await requireAdminRole();
   return listBenefitsForAdmin(programId, city);
 }
 
 export async function loadBenefitFullAction(id: string): Promise<AdminBenefitFull | null> {
-  await requireAdminUser();
+  await requireBenefitAccess(id);
   return getBenefitFull(id);
 }
 
@@ -46,16 +55,15 @@ export async function saveBenefitAction(
   id: string,
   patch: AdminBenefitPatch
 ): Promise<AdminBenefitFull> {
-  await requireAdminUser();
+  await requireBenefitAccess(id);
   return updateBenefitAdmin(id, patch);
 }
 
-/** Sedes reales de un beneficio en una ciudad - usada por el preview
- * "👁️ Usuario Final" del panel admin, para que muestre el mismo boton de
- * sedes (Ver sedes (N) / +N puntos) que vera un usuario real, en vez de
- * caer siempre al "Como llegar" legacy de una sola sede. */
+/** Sedes reales de un beneficio - usada por el preview "👁️ Usuario Final" del panel admin,
+ * para que muestre el mismo boton de sedes (Ver sedes (N) / +N puntos) que vera un usuario
+ * real, en vez de caer siempre al "Como llegar" legacy de una sola sede. */
 export async function loadBenefitLocationsAction(benefitId: string): Promise<BenefitLocation[]> {
-  await requireAdminUser();
+  await requireBenefitAccess(benefitId);
   return getBenefitLocations(benefitId);
 }
 
@@ -64,7 +72,7 @@ export async function loadBenefitLocationsAction(benefitId: string): Promise<Ben
 // ============================================================
 
 export async function searchMerchantsAction(query: string): Promise<MerchantSearchResult[]> {
-  await requireAdminUser();
+  await requireAnyTaskAccess();
   return searchMerchants(query);
 }
 
@@ -72,7 +80,7 @@ export async function createMerchantAndLinkAction(
   benefitId: string,
   name: string
 ): Promise<string> {
-  await requireAdminUser();
+  await requireBenefitAccess(benefitId);
   return createMerchantAndLink(benefitId, name);
 }
 
@@ -80,12 +88,12 @@ export async function linkExistingMerchantAction(
   benefitId: string,
   merchantId: string
 ): Promise<void> {
-  await requireAdminUser();
+  await requireBenefitAccess(benefitId);
   return linkExistingMerchant(benefitId, merchantId);
 }
 
 export async function createSedeFromLegacyAction(benefitId: string): Promise<void> {
-  await requireAdminUser();
+  await requireBenefitAccess(benefitId);
   return createSedeFromLegacy(benefitId);
 }
 
@@ -94,7 +102,7 @@ export async function listMerchantLocationsAction(
   city: string,
   benefitId: string
 ): Promise<MerchantLocation[]> {
-  await requireAdminUser();
+  await requireBenefitAccess(benefitId);
   return listMerchantLocations(merchantId, city, benefitId);
 }
 
@@ -103,23 +111,25 @@ export async function toggleLocationLinkAction(
   locationId: string,
   linked: boolean
 ): Promise<void> {
-  await requireAdminUser();
+  await requireBenefitAccess(benefitId);
   return toggleLocationLink(benefitId, locationId, linked);
 }
 
 export async function upsertLocationAction(input: LocationInput): Promise<string> {
-  await requireAdminUser();
+  await requireMerchantAccess(input.merchantId);
   return upsertLocation(input);
 }
 
 export async function deleteLocationAction(id: string): Promise<void> {
-  await requireAdminUser();
+  await requireLocationAccess(id);
   return deleteLocation(id);
 }
 
+/** Resuelve un link corto de Maps siguiendo la redireccion (fetch desde el servidor):
+ * sin entidad propia que validar, se exige al menos trabajo asignado. */
 export async function resolveMapsUrlLatLngAction(
   url: string
 ): Promise<{ lat: number | null; lng: number | null }> {
-  await requireAdminUser();
+  await requireAnyTaskAccess();
   return resolveMapsUrlLatLng(url);
 }
