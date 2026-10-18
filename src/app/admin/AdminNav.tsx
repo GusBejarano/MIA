@@ -15,6 +15,7 @@ export default function AdminNav({ role }: { role: "admin" | "analista" }) {
           { href: "/admin", label: "Catálogo" },
           { href: "/admin/tasks", label: "Tareas" },
           { href: "/admin/users", label: "Usuarios" },
+          { href: "/admin/pagos", label: "Pagos" },
         ]
       : [{ href: "/admin/tasks", label: "Mis tareas" }];
 
