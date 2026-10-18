@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/mia/supabaseClient";
 import { extractLatLngFromMapsUrl } from "./mapsUrl";
+import { resolveActiveMerchantId } from "./guards";
 
 export type AdminCityOption = { value: string; label: string };
 export type AdminProgramOption = { id: string; name: string };
@@ -180,6 +181,11 @@ const FULL_COLUMNS =
   "social_media_url, how_to_get_there, address, hours, research_source, original_source_url, " +
   "merchant_id, raw_data, updated_at";
 
+/** Si el merchant_id apuntara a un comercio ya fusionado (no deberia pasar
+ * en operacion normal - merge_merchants mueve los beneficios al vigente en
+ * la misma transaccion - pero es la red de seguridad del item N1), lo
+ * resuelve al vigente antes de devolver el beneficio. Nunca escribe: es una
+ * correccion de lectura, no persiste el cambio. */
 export async function getBenefitFull(id: string): Promise<AdminBenefitFull | null> {
   const { data, error } = await supabase
     .from("benefits")
@@ -187,7 +193,12 @@ export async function getBenefitFull(id: string): Promise<AdminBenefitFull | nul
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(`No se pudo consultar el beneficio: ${error.message}`);
-  return (data as unknown as AdminBenefitFull) ?? null;
+  if (!data) return null;
+  const benefit = data as unknown as AdminBenefitFull;
+  if (benefit.merchant_id) {
+    benefit.merchant_id = await resolveActiveMerchantId(benefit.merchant_id);
+  }
+  return benefit;
 }
 
 export type AdminBenefitPatch = Partial<Omit<AdminBenefitFull, "id" | "updated_at">>;
@@ -240,22 +251,54 @@ export async function resolveMapsUrlLatLng(
 export type MerchantSearchResult = {
   id: string;
   name: string;
+  nit: string;
+  nitProvisional: boolean;
   locationCount: number;
+  benefitCount: number;
   benefactors: string[];
 };
 
-/** Buscador de comercio (regla D.9) - nunca auto-vincula, solo propone
- * coincidencias con cuantas sedes tienen y de que otros benefactores vienen. */
+/** Busca por nombre O por NIT exacto (sirve tanto al buscador de sedes
+ * como al NIT que se escribe en "+ Nuevo Convenio", item N2) - siempre
+ * excluye comercios fusionados (item N1): esos ya no son candidatos a
+ * vincular, el que sigue vigente es merged_into (resolveActiveMerchantId). */
 export async function searchMerchants(query: string): Promise<MerchantSearchResult[]> {
-  if (!query.trim()) return [];
-  const { data: merchants, error } = await supabase
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  // Dos consultas por separado (en vez de un .or() con el texto interpolado)
+  // para no depender de escapar comas/parentesis dentro de la sintaxis de
+  // filtros de PostgREST - .ilike()/.eq() son seguros con cualquier texto.
+  const byNamePromise = supabase
     .from("merchants")
-    .select("id, name")
-    .ilike("name", `%${query}%`)
+    .select("id, name, nit, nit_provisional")
+    .is("merged_into", null)
+    .ilike("name", `%${trimmed}%`)
     .order("name")
     .limit(10);
-  if (error) throw new Error(`No se pudieron buscar comercios: ${error.message}`);
-  if (!merchants || merchants.length === 0) return [];
+  const isNit = /^\d+$/.test(trimmed);
+  const byNitPromise = isNit
+    ? supabase
+        .from("merchants")
+        .select("id, name, nit, nit_provisional")
+        .is("merged_into", null)
+        .eq("nit", trimmed)
+        .limit(1)
+    : Promise.resolve({ data: [], error: null });
+
+  const [{ data: nameRows, error: nameError }, { data: nitRows, error: nitError }] = await Promise.all([
+    byNamePromise,
+    byNitPromise,
+  ]);
+  if (nameError) throw new Error(`No se pudieron buscar comercios: ${nameError.message}`);
+  if (nitError) throw new Error(`No se pudo buscar por NIT: ${nitError.message}`);
+
+  const merchantById = new Map<string, { id: string; name: string; nit: string; nit_provisional: boolean }>();
+  for (const row of [...(nameRows ?? []), ...(nitRows ?? [])]) {
+    merchantById.set(row.id as string, row as { id: string; name: string; nit: string; nit_provisional: boolean });
+  }
+  const merchants = [...merchantById.values()].slice(0, 10);
+  if (merchants.length === 0) return [];
 
   const merchantIds = merchants.map((m) => m.id as string);
 
@@ -279,8 +322,10 @@ export async function searchMerchants(query: string): Promise<MerchantSearchResu
   const { data: programRows } = await supabase.from("programs").select("id, name").in("id", programIds);
   const programNameById = new Map((programRows ?? []).map((p) => [p.id as string, p.name as string]));
   const benefactorsByMerchant = new Map<string, Set<string>>();
+  const benefitCountByMerchant = new Map<string, number>();
   for (const row of benefitRows ?? []) {
     const mId = row.merchant_id as string;
+    benefitCountByMerchant.set(mId, (benefitCountByMerchant.get(mId) ?? 0) + 1);
     const pName = programNameById.get(row.source_program_id as string) ?? "";
     if (!benefactorsByMerchant.has(mId)) benefactorsByMerchant.set(mId, new Set());
     if (pName) benefactorsByMerchant.get(mId)!.add(pName);
@@ -289,7 +334,10 @@ export async function searchMerchants(query: string): Promise<MerchantSearchResu
   return merchants.map((m) => ({
     id: m.id as string,
     name: m.name as string,
+    nit: m.nit as string,
+    nitProvisional: Boolean(m.nit_provisional),
     locationCount: countByMerchant.get(m.id as string) ?? 0,
+    benefitCount: benefitCountByMerchant.get(m.id as string) ?? 0,
     benefactors: [...(benefactorsByMerchant.get(m.id as string) ?? [])],
   }));
 }
