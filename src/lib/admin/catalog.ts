@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/mia/supabaseClient";
+import { extractLatLngFromMapsUrl } from "./mapsUrl";
 
 export type AdminCityOption = { value: string; label: string };
 export type AdminProgramOption = { id: string; name: string };
@@ -216,16 +217,6 @@ export async function updateBenefitAdmin(
 // ============================================================
 // Admin v2.0 - comercio compartido + sedes (pestaña "Sedes" del panel de edicion)
 // ============================================================
-
-/** Extrae lat/lng de un link largo de Google Maps (patron "@lat,lng,zoom") -
- * parseo simple de URL, no geocodificacion paga (decision ya tomada en
- * v2.0). Links cortos (maps.app.goo.gl) o de busqueda por texto no traen
- * coordenadas - devuelve null en ese caso, se completan a mano despues. */
-export function extractLatLngFromMapsUrl(url: string): { lat: number | null; lng: number | null } {
-  const match = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
-  if (!match) return { lat: null, lng: null };
-  return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
-}
 
 /** Links cortos (maps.app.goo.gl) no traen coordenadas en el texto - no
  * requiere geocodificacion paga, solo seguir la redireccion HTTP (gratis)

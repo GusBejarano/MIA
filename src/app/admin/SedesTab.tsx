@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { AdminBenefitFull, MerchantSearchResult, MerchantLocation } from "@/lib/admin/catalog";
+import { extractLatLngFromMapsUrl } from "@/lib/admin/mapsUrl";
 import {
   loadBenefitFullAction,
   searchMerchantsAction,
@@ -14,15 +15,6 @@ import {
   deleteLocationAction,
   resolveMapsUrlLatLngAction,
 } from "./catalogActions";
-
-// Espejo minimo de extractLatLngFromMapsUrl (catalog.ts) - no se puede
-// importar esa funcion aqui: catalog.ts es server-only (lanza si detecta
-// `window`, ver supabaseClient.ts) y este componente corre en el navegador.
-function extractLatLngFromMapsUrl(url: string): { lat: number | null; lng: number | null } {
-  const match = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
-  if (!match) return { lat: null, lng: null };
-  return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
-}
 
 type LocationFormState = {
   id?: string;
