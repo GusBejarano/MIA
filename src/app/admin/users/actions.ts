@@ -32,8 +32,10 @@ export async function inviteAdminUserAction(
   // "?code=") - por eso apuntan a /admin/auth/confirm (pagina de cliente
   // que lee el hash), no a /admin/auth/callback (Route Handler para
   // "?code=", que nunca puede ver el fragmento).
+  const redirectBase =
+    process.env.ADMIN_INVITE_REDIRECT_URL || "https://descuentosinteligentes.com";
   const { data, error } = await supabase.auth.admin.inviteUserByEmail(email, {
-    redirectTo: "https://descuentosinteligentes.com/admin/auth/confirm",
+    redirectTo: `${redirectBase.replace(/\/$/, "")}/admin/auth/confirm`,
   });
   if (error || !data.user) {
     return { error: `No se pudo invitar: ${error?.message ?? "error desconocido"}` };
