@@ -2,12 +2,15 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import DetailSheet from "@/components/mia/DetailSheet";
 import type { TaskDetail } from "@/lib/admin/tasks";
 import type { AdminBenefitFull } from "@/lib/admin/catalog";
+import type { BenefitLocation } from "@/lib/mia/discovery";
 import { getTaskDetailAction } from "../../tasksActions";
-import { loadBenefitFullAction } from "../../catalogActions";
+import { loadBenefitFullAction, loadBenefitLocationsAction } from "../../catalogActions";
 import AdminBenefitGrid from "../../AdminBenefitGrid";
 import EditPanel from "../../EditPanel";
+import { toPreviewMessage } from "../../previewMessage";
 
 function taskLabel(t: TaskDetail): string {
   return `${t.programName} · ${t.city}${t.category ? ` · ${t.category}` : ""}`;
@@ -32,6 +35,9 @@ export default function TaskDetailView({
   const [selected, setSelected] = useState<AdminBenefitFull | null>(null);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [auditFilter, setAuditFilter] = useState<AuditFilter>("pendientes");
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewSedes, setPreviewSedes] = useState<BenefitLocation[]>([]);
+  const [loadingPreview, setLoadingPreview] = useState(false);
 
   const filteredBenefits = useMemo(() => {
     if (auditFilter === "todos") return detail.benefits;
@@ -47,12 +53,27 @@ export default function TaskDetailView({
 
   async function handleSelectCard(id: string) {
     setPanelCollapsed(false);
+    setShowPreview(false);
     const full = await loadBenefitFullAction(id);
     setSelected(full);
   }
 
   function handleSaved(updated: AdminBenefitFull) {
     setSelected(updated);
+  }
+
+  async function handleShowPreview() {
+    if (!selected) return;
+    setLoadingPreview(true);
+    try {
+      const sedes = await loadBenefitLocationsAction(selected.id);
+      setPreviewSedes(sedes);
+    } catch {
+      setPreviewSedes([]);
+    } finally {
+      setLoadingPreview(false);
+    }
+    setShowPreview(true);
   }
 
   return (
@@ -132,7 +153,13 @@ export default function TaskDetailView({
               →
             </button>
             <h2 className="text-sm font-bold text-zinc-900">Detalle de Beneficio</h2>
-            <span className="w-4" />
+            <button
+              onClick={handleShowPreview}
+              disabled={loadingPreview}
+              className="flex items-center gap-1 rounded-lg border border-zinc-200 px-2 py-1 text-xs font-semibold text-mia-cyan hover:bg-zinc-50 disabled:opacity-50"
+            >
+              <span>👁️</span> {loadingPreview ? "Cargando..." : "Usuario Final"}
+            </button>
           </div>
           <EditPanel
             key={selected.id}
@@ -143,6 +170,13 @@ export default function TaskDetailView({
             onAudited={refreshDetail}
           />
         </div>
+      )}
+
+      {selected && showPreview && (
+        <DetailSheet
+          message={toPreviewMessage(selected, previewSedes)}
+          onClose={() => setShowPreview(false)}
+        />
       )}
     </div>
   );
