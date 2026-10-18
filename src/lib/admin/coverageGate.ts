@@ -5,7 +5,7 @@
 // vivo del gate de cobertura, sin esperar a guardar).
 
 function stripAccents(s: string): string {
-  return s.normalize("NFD").replace(/[0300-036f]/g, "");
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
 /** Espejo en TS de la funcion SQL normalize_city_list (verificado contra la
