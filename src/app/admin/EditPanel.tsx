@@ -399,8 +399,11 @@ export default function EditPanel({
           {auditError && <p className="rounded-lg bg-red-50 p-2 text-xs text-red-700">{auditError}</p>}
           {auditInfo && !auditInfo.meetsCondition && (
             <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-700">
-              Este beneficio es presencial y no tiene comercio/sedes vinculadas. Complétalo en la
-              pestaña Sedes antes de marcarlo auditado.
+              {!form.delivery_mode
+                ? "Define cómo se entrega este beneficio en la pestaña Datos, sección Cobertura, para poder auditarlo."
+                : form.delivery_mode === "presencial" || form.delivery_mode === "online_y_presencial"
+                  ? "Este beneficio es presencial y no tiene comercio/sedes vinculadas. Complétalo en la pestaña Sedes antes de marcarlo auditado."
+                  : "Este beneficio no cumple hoy la condición para marcarlo auditado."}
             </p>
           )}
           {auditInfo?.status === "auditado" && auditInfo.lastAuditedAt && (
