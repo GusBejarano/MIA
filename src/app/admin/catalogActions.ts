@@ -9,6 +9,7 @@ import {
 } from "@/lib/admin/guards";
 import { getBenefitLocations, type BenefitLocation } from "@/lib/mia/discovery";
 import {
+  listAllCities,
   listBenefitsForAdmin,
   getBenefitFull,
   updateBenefitAdmin,
@@ -17,10 +18,12 @@ import {
   linkExistingMerchant,
   createSedeFromLegacy,
   listMerchantLocations,
+  getLinkedLocationCities,
   toggleLocationLink,
   upsertLocation,
   deleteLocation,
   resolveMapsUrlLatLng,
+  type AdminCityOption,
   type AdminBenefitCard,
   type AdminBenefitFull,
   type AdminBenefitPatch,
@@ -99,11 +102,25 @@ export async function createSedeFromLegacyAction(benefitId: string): Promise<voi
 
 export async function listMerchantLocationsAction(
   merchantId: string,
-  city: string,
   benefitId: string
 ): Promise<MerchantLocation[]> {
   await requireBenefitAccess(benefitId);
-  return listMerchantLocations(merchantId, city, benefitId);
+  return listMerchantLocations(merchantId, benefitId);
+}
+
+/** Ciudades de las sedes vinculadas a este beneficio - fuente del
+ * consolidado "Ciudad(es)" calculado (item C2). */
+export async function getLinkedLocationCitiesAction(benefitId: string): Promise<string[]> {
+  await requireBenefitAccess(benefitId);
+  return getLinkedLocationCities(benefitId);
+}
+
+/** Todas las ciudades de city_regions (desplegable del formulario de sede,
+ * item C3, y nombres visibles para agrupar/consolidar en C1/C2) - sin
+ * entidad propia que resolver, se exige al menos trabajo asignado. */
+export async function listAllCitiesAction(): Promise<AdminCityOption[]> {
+  await requireAnyTaskAccess();
+  return listAllCities();
 }
 
 export async function toggleLocationLinkAction(

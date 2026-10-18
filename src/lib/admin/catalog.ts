@@ -369,26 +369,19 @@ export type MerchantLocation = {
   linked: boolean;
 };
 
-/** Sedes del comercio acotadas a la ciudad ya elegida en la navegacion
- * (regla D.11) - mismo patron resolve_city_scope + .overlaps() que el
- * resto de la app, marcando cuales ya estan vinculadas a ESTE beneficio. */
+/** Todas las sedes del comercio, de todas las ciudades (item C1 de v2.3 -
+ * antes se acotaba a la ciudad de navegacion con resolve_city_scope, lo que
+ * escondia sedes reales del convenio en otras ciudades). Marca cuales ya
+ * estan vinculadas a ESTE beneficio. El agrupado/orden por ciudad lo hace
+ * el componente, no esta funcion. */
 export async function listMerchantLocations(
   merchantId: string,
-  city: string,
   benefitId: string
 ): Promise<MerchantLocation[]> {
-  const { data: scopeKeys, error: scopeError } = await supabase.rpc("resolve_city_scope", {
-    target_city: city,
-  });
-  if (scopeError) {
-    throw new Error(`No se pudo resolver el alcance de la ciudad: ${scopeError.message}`);
-  }
-
   const { data: locations, error } = await supabase
     .from("benefit_locations")
     .select("id, name, address, city, maps_url, lat, lng")
-    .eq("merchant_id", merchantId)
-    .overlaps("city_list", (scopeKeys ?? []) as string[]);
+    .eq("merchant_id", merchantId);
   if (error) throw new Error(`No se pudieron consultar las sedes: ${error.message}`);
 
   const { data: links, error: linksError } = await supabase
@@ -408,6 +401,22 @@ export async function listMerchantLocations(
     lng: (l.lng as number) ?? null,
     linked: linkedIds.has(l.id as string),
   }));
+}
+
+/** Ciudad de cada sede vinculada a este beneficio (una entrada por sede,
+ * sin dedupe - el llamador cuenta cuantas hay por ciudad). Es la fuente del
+ * consolidado "Ciudad(es)" de la pestaña Datos (item C2 de v2.3): se
+ * calcula en el cliente a partir de esto para que funcione aunque el
+ * trigger de base de datos (2026.10.15, Fase 6) todavia no este aplicado. */
+export async function getLinkedLocationCities(benefitId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("benefit_location_links")
+    .select("benefit_locations!inner(city)")
+    .eq("benefit_id", benefitId);
+  if (error) throw new Error(`No se pudieron consultar las ciudades de las sedes: ${error.message}`);
+  return (data ?? [])
+    .map((r) => (r.benefit_locations as unknown as { city: string | null }).city)
+    .filter((c): c is string => Boolean(c));
 }
 
 export async function toggleLocationLink(

@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { AdminBenefitFull, AdminBenefitPatch } from "@/lib/admin/catalog";
 import type { BenefitAuditInfo } from "@/lib/admin/audit";
 import { previewCoverageGate } from "@/lib/admin/coverageGate";
-import { saveBenefitAction } from "./catalogActions";
+import { coverageFromCities, coverageSummaryText, coverageSavedText, parseDeclaredCities } from "@/lib/admin/coverage";
+import { saveBenefitAction, getLinkedLocationCitiesAction, listAllCitiesAction } from "./catalogActions";
 import { getAuditStatusAction, markBenefitAuditedAction } from "./auditActions";
 import SedesTab from "./SedesTab";
 
@@ -101,6 +102,51 @@ export default function EditPanel({
     [form.city, form.delivery_mode, form.coverage_confidence]
   );
 
+  const [citiesMap, setCitiesMap] = useState<Record<string, string>>({});
+  const [linkedCities, setLinkedCities] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    listAllCitiesAction()
+      .then((rows) => setCitiesMap(Object.fromEntries(rows.map((r) => [r.value, r.label]))))
+      .catch(() => {});
+  }, []);
+
+  // Se recalcula al volver de la pestaña Sedes (mismo gancho que el efecto
+  // de auditoria de mas abajo) - item C2: la cobertura calculada tiene que
+  // reflejar de inmediato un vinculo que se acaba de marcar/desmarcar.
+  useEffect(() => {
+    let cancelled = false;
+    const task = benefit.merchant_id
+      ? getLinkedLocationCitiesAction(benefit.id)
+      : Promise.resolve<string[]>([]);
+    task
+      .then((cities) => {
+        if (!cancelled) setLinkedCities(cities);
+      })
+      .catch(() => {
+        if (!cancelled) setLinkedCities([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [benefit.id, benefit.merchant_id, activeTab]);
+
+  const coverage = useMemo(
+    () => coverageFromCities(linkedCities ?? [], citiesMap),
+    [linkedCities, citiesMap]
+  );
+  // "Al menos una sede vinculada CON ciudad" (no solo merchant_id) - mientras
+  // la consulta esta en vuelo, linkedCities es null y esto da false, que
+  // mantiene el comportamiento viejo (campo editable, city va en el patch)
+  // hasta que se confirme si hay cobertura real que calcular.
+  const hasSedesCoverage = (linkedCities?.length ?? 0) > 0;
+  const calculatedCityText = coverageSavedText(coverage);
+  const declaredCities = useMemo(() => parseDeclaredCities(form.city), [form.city]);
+  const calculatedCityCodes = useMemo(() => coverage.map((c) => c.city), [coverage]);
+  const citiesStarting = calculatedCityCodes.filter((c) => !declaredCities.includes(c));
+  const citiesStopping = declaredCities.filter((c) => !calculatedCityCodes.includes(c));
+  const savedCityDiffers = hasSedesCoverage && (form.city ?? "").trim() !== calculatedCityText;
+
   // Reacciona en vivo al selector de modo de entrega (sin necesidad de
   // guardar primero) - regla del diseno de la pestaña Sedes.
   const showSedesTab =
@@ -156,7 +202,9 @@ export default function EditPanel({
     const patch: AdminBenefitPatch = {
       title: form.title,
       category: form.category,
-      city: form.city,
+      // Si hay sedes vinculadas con ciudad, el consolidado lo calcula el
+      // sistema (item C2) - no se envia city para no pisarlo.
+      ...(hasSedesCoverage ? {} : { city: form.city }),
       status: form.status,
       delivery_mode: form.delivery_mode,
       coverage_confidence: form.coverage_confidence,
@@ -255,7 +303,51 @@ export default function EditPanel({
 
       <fieldset className="flex flex-col gap-2">
         <legend className="mb-1 text-xs font-bold uppercase text-zinc-400">Cobertura (v2.0)</legend>
-        {textField("Ciudad(es)", "city", form, setForm)}
+        {hasSedesCoverage ? (
+          <div className="block text-xs">
+            <span className="mb-1 flex items-center gap-1.5 font-semibold text-zinc-500">
+              Ciudad(es)
+              <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
+                Calculado desde las sedes
+              </span>
+            </span>
+            <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm text-zinc-700">
+              {coverageSummaryText(coverage)}
+            </p>
+            {savedCityDiffers && (
+              <div className="mt-1 rounded-lg bg-amber-50 p-2 text-[11px] text-amber-700">
+                <p>Hoy en la base: {form.city || "(vacío)"}</p>
+                {citiesStarting.length > 0 && (
+                  <p>
+                    Empezarán a mostrarse en:{" "}
+                    {citiesStarting.map((c) => citiesMap[c] ?? c).join(", ")}.
+                  </p>
+                )}
+                {citiesStopping.length > 0 && (
+                  <p>
+                    Dejarán de mostrarse en:{" "}
+                    {citiesStopping.map((c) => citiesMap[c] ?? c).join(", ")}.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <label className="block text-xs">
+            <span className="mb-1 flex items-center gap-1.5 font-semibold text-zinc-500">
+              Ciudad(es)
+              <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500">
+                Manual (sin sedes vinculadas)
+              </span>
+            </span>
+            <input
+              type="text"
+              value={form.city ?? ""}
+              onChange={(e) => setForm({ ...form, city: e.target.value })}
+              className="w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-sm"
+            />
+          </label>
+        )}
         <label className="block text-xs">
           <span className="mb-1 block font-semibold text-zinc-500">
             ¿Cómo se entrega este beneficio?

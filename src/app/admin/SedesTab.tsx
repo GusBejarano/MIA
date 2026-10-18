@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { AdminBenefitFull, MerchantSearchResult, MerchantLocation } from "@/lib/admin/catalog";
+import { useEffect, useMemo, useState } from "react";
+import type { AdminBenefitFull, AdminCityOption, MerchantSearchResult, MerchantLocation } from "@/lib/admin/catalog";
 import { extractLatLngFromMapsUrl } from "@/lib/admin/mapsUrl";
+import { coverageFromCities, coverageSummaryText } from "@/lib/admin/coverage";
 import {
   loadBenefitFullAction,
   searchMerchantsAction,
@@ -10,11 +11,14 @@ import {
   linkExistingMerchantAction,
   createSedeFromLegacyAction,
   listMerchantLocationsAction,
+  listAllCitiesAction,
   toggleLocationLinkAction,
   upsertLocationAction,
   deleteLocationAction,
   resolveMapsUrlLatLngAction,
 } from "./catalogActions";
+
+const MAX_VISIBLE_PER_GROUP = 5;
 
 type LocationFormState = {
   id?: string;
@@ -42,6 +46,8 @@ function locationToForm(l: MerchantLocation): LocationFormState {
   };
 }
 
+type CityGroup = { city: string | null; label: string; locations: MerchantLocation[] };
+
 export default function SedesTab({
   benefit,
   city,
@@ -59,6 +65,9 @@ export default function SedesTab({
   const [locations, setLocations] = useState<MerchantLocation[]>([]);
   const [loadingLocations, setLoadingLocations] = useState(false);
   const [locationsError, setLocationsError] = useState<string | null>(null);
+  const [cities, setCities] = useState<AdminCityOption[]>([]);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [coverageNotice, setCoverageNotice] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<LocationFormState | null>(null);
   const [savingLocation, setSavingLocation] = useState(false);
@@ -66,6 +75,17 @@ export default function SedesTab({
   const [extractError, setExtractError] = useState<string | null>(null);
 
   const hasLegacyData = Boolean(benefit.address && benefit.how_to_get_there);
+
+  const citiesMap = useMemo(
+    () => Object.fromEntries(cities.map((c) => [c.value, c.label])),
+    [cities]
+  );
+
+  useEffect(() => {
+    listAllCitiesAction()
+      .then(setCities)
+      .catch(() => setCities([]));
+  }, []);
 
   useEffect(() => {
     if (!benefit.merchant_id) return;
@@ -76,7 +96,7 @@ export default function SedesTab({
       setLoadingLocations(true);
       setLocationsError(null);
       try {
-        const rows = await listMerchantLocationsAction(merchantId, city, benefit.id);
+        const rows = await listMerchantLocationsAction(merchantId, benefit.id);
         if (!cancelled) setLocations(rows);
       } catch (err) {
         if (!cancelled) {
@@ -91,7 +111,38 @@ export default function SedesTab({
     return () => {
       cancelled = true;
     };
-  }, [benefit.merchant_id, benefit.id, city]);
+  }, [benefit.merchant_id, benefit.id]);
+
+  const cityGroups: CityGroup[] = useMemo(() => {
+    const map = new Map<string, MerchantLocation[]>();
+    for (const l of locations) {
+      const key = l.city ?? "__sin_ciudad__";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(l);
+    }
+    const groups = [...map.entries()].map(([key, locs]) => ({
+      city: key === "__sin_ciudad__" ? null : key,
+      label: key === "__sin_ciudad__" ? "Sin ciudad" : citiesMap[key] ?? key,
+      locations: [...locs].sort((a, b) => {
+        if (a.linked !== b.linked) return a.linked ? -1 : 1;
+        return (a.name || a.address).localeCompare(b.name || b.address);
+      }),
+    }));
+    groups.sort((a, b) => {
+      if (b.locations.length !== a.locations.length) return b.locations.length - a.locations.length;
+      return a.label.localeCompare(b.label);
+    });
+    return groups;
+  }, [locations, citiesMap]);
+
+  const linkedCityCoverage = useMemo(
+    () =>
+      coverageFromCities(
+        locations.filter((l) => l.linked && l.city).map((l) => l.city as string),
+        citiesMap
+      ),
+    [locations, citiesMap]
+  );
 
   async function refreshBenefit() {
     const updated = await loadBenefitFullAction(benefit.id);
@@ -99,7 +150,7 @@ export default function SedesTab({
   }
 
   async function refreshLocations(merchantId: string) {
-    const rows = await listMerchantLocationsAction(merchantId, city, benefit.id);
+    const rows = await listMerchantLocationsAction(merchantId, benefit.id);
     setLocations(rows);
   }
 
@@ -146,12 +197,34 @@ export default function SedesTab({
     }
   }
 
-  async function handleToggleLink(locationId: string, linked: boolean) {
+  async function handleToggleLink(location: MerchantLocation, linked: boolean) {
     if (!benefit.merchant_id) return;
     setLocationsError(null);
+    setCoverageNotice(null);
+    const merchantId = benefit.merchant_id;
+
+    const linkedBefore = locations.filter((l) => l.linked);
+    const wasFirstEverLinked = linked && linkedBefore.length === 0;
+    const cityLinkedCountBefore = location.city
+      ? linkedBefore.filter((l) => l.city === location.city).length
+      : 0;
+
     try {
-      await toggleLocationLinkAction(benefit.id, locationId, linked);
-      await refreshLocations(benefit.merchant_id);
+      await toggleLocationLinkAction(benefit.id, location.id, linked);
+      await refreshLocations(merchantId);
+
+      if (location.city) {
+        const cityLabel = citiesMap[location.city] ?? location.city;
+        if (wasFirstEverLinked) {
+          setCoverageNotice(
+            `Al vincular la primera sede, la cobertura deja de ser manual y pasa a calcularse desde las sedes. Este convenio empezará a mostrarse en ${cityLabel}.`
+          );
+        } else if (linked && cityLinkedCountBefore === 0) {
+          setCoverageNotice(`Este convenio empezará a mostrarse en ${cityLabel}.`);
+        } else if (!linked && cityLinkedCountBefore === 1) {
+          setCoverageNotice(`Este convenio dejará de mostrarse en ${cityLabel}.`);
+        }
+      }
     } catch (err) {
       setLocationsError(err instanceof Error ? err.message : "No se pudo actualizar el vínculo.");
     }
@@ -169,7 +242,7 @@ export default function SedesTab({
   }
 
   async function handleSaveLocation() {
-    if (!editing || !benefit.merchant_id) return;
+    if (!editing || !benefit.merchant_id || !editing.city) return;
     setSavingLocation(true);
     setLocationsError(null);
     try {
@@ -178,7 +251,7 @@ export default function SedesTab({
         merchantId: benefit.merchant_id,
         name: editing.name.trim() || null,
         address: editing.address.trim(),
-        city: editing.city.trim() || null,
+        city: editing.city,
         mapsUrl: editing.mapsUrl.trim(),
         lat: editing.lat,
         lng: editing.lng,
@@ -213,6 +286,15 @@ export default function SedesTab({
     } finally {
       setExtracting(false);
     }
+  }
+
+  function toggleGroupExpanded(key: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   if (!benefit.merchant_id) {
@@ -286,64 +368,128 @@ export default function SedesTab({
     );
   }
 
-  const linkedCount = locations.filter((l) => l.linked).length;
+  const editingOriginal = editing?.id ? locations.find((l) => l.id === editing.id) ?? null : null;
+  const cityChangedOnLinkedSede = Boolean(
+    editing?.id &&
+      editingOriginal?.linked &&
+      editing.city &&
+      editing.city !== (editingOriginal.city ?? "")
+  );
+  const cityChangePreview = (() => {
+    if (!cityChangedOnLinkedSede || !editing) return null;
+    const simulatedCities = locations
+      .filter((l) => l.linked)
+      .map((l) => (l.id === editing.id ? editing.city : l.city))
+      .filter((c): c is string => Boolean(c));
+    const coverage = coverageFromCities(simulatedCities, citiesMap);
+    const newCityLabel = citiesMap[editing.city] ?? editing.city;
+    const oldCity = editingOriginal?.city ?? null;
+    const oldCityLabel = oldCity ? citiesMap[oldCity] ?? oldCity : null;
+    const oldCityHasOthers = oldCity
+      ? locations.some((l) => l.linked && l.id !== editing.id && l.city === oldCity)
+      : true;
+    return {
+      summary: coverageSummaryText(coverage),
+      startsIn: newCityLabel,
+      stopsIn: oldCityLabel && !oldCityHasOthers ? oldCityLabel : null,
+    };
+  })();
 
   return (
     <div className="flex flex-col gap-3 p-4 text-xs">
       {locationsError && <p className="rounded-lg bg-red-50 p-2 text-red-700">{locationsError}</p>}
+      {coverageNotice && (
+        <p className="rounded-lg bg-sky-50 p-2 text-sky-700">{coverageNotice}</p>
+      )}
 
-      <p className="text-zinc-500">
-        {linkedCount} de {locations.length} sedes de este comercio aplican a este beneficio en{" "}
-        {city}.
-      </p>
+      <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-2">
+        <p className="font-semibold text-zinc-500">Cobertura de este convenio · calculada desde las sedes</p>
+        <p className="mt-1 text-zinc-700">
+          {linkedCityCoverage.length > 0
+            ? coverageSummaryText(linkedCityCoverage)
+            : "Sin sedes vinculadas todavía."}
+        </p>
+      </div>
 
       {loadingLocations && <p className="text-zinc-400">Cargando sedes...</p>}
 
       {!loadingLocations && (
-        <ul className="flex flex-col gap-2">
-          {locations.map((l) => (
-            <li key={l.id} className="rounded-lg border border-zinc-200 p-2">
-              <div className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  checked={l.linked}
-                  onChange={(e) => handleToggleLink(l.id, e.target.checked)}
-                  className="mt-1"
-                />
-                <div className="flex-1">
-                  <p className="font-semibold text-zinc-900">{l.name || l.address}</p>
-                  {l.name && <p className="text-zinc-500">{l.address}</p>}
-                  <span
-                    className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                      l.lat !== null && l.lng !== null
-                        ? "bg-emerald-50 text-emerald-700"
-                        : "bg-zinc-100 text-zinc-500"
-                    }`}
+        <div className="flex flex-col gap-3">
+          {cityGroups.map((group) => {
+            const key = group.city ?? "__sin_ciudad__";
+            const expanded = expandedGroups.has(key);
+            const visible = expanded ? group.locations : group.locations.slice(0, MAX_VISIBLE_PER_GROUP);
+            const linkedInGroup = group.locations.filter((l) => l.linked).length;
+            return (
+              <div key={key}>
+                <p className="mb-1 font-semibold text-zinc-500">
+                  {group.label} · {group.locations.length} {group.locations.length === 1 ? "sede" : "sedes"}
+                  {" · "}
+                  {linkedInGroup} en este convenio
+                </p>
+                <ul className="flex flex-col gap-2">
+                  {visible.map((l) => (
+                    <li key={l.id} className="rounded-lg border border-zinc-200 p-2">
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={l.linked}
+                          onChange={(e) => handleToggleLink(l, e.target.checked)}
+                          className="mt-1"
+                        />
+                        <div className="flex-1">
+                          <p className="font-semibold text-zinc-900">{l.name || l.address}</p>
+                          {l.name && <p className="text-zinc-500">{l.address}</p>}
+                          <div className="mt-1 flex gap-1">
+                            <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600">
+                              {group.label}
+                            </span>
+                            <span
+                              className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                l.lat !== null && l.lng !== null
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : "bg-zinc-100 text-zinc-500"
+                              }`}
+                            >
+                              {l.lat !== null && l.lng !== null ? "Geolocalizada" : "Sin coordenadas"}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setExtractError(null);
+                            setEditing(locationToForm(l));
+                          }}
+                          className="shrink-0 text-zinc-400 hover:text-zinc-900"
+                          title="Editar"
+                        >
+                          ✎
+                        </button>
+                        <button
+                          onClick={() => handleDeleteLocation(l.id)}
+                          className="shrink-0 text-zinc-400 hover:text-red-600"
+                          title="Eliminar"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                {group.locations.length > MAX_VISIBLE_PER_GROUP && (
+                  <button
+                    onClick={() => toggleGroupExpanded(key)}
+                    className="mt-1 text-[11px] font-semibold text-mia-cyan hover:underline"
                   >
-                    {l.lat !== null && l.lng !== null ? "Geolocalizada" : "Sin coordenadas"}
-                  </span>
-                </div>
-                <button
-                  onClick={() => {
-                    setExtractError(null);
-                    setEditing(locationToForm(l));
-                  }}
-                  className="shrink-0 text-zinc-400 hover:text-zinc-900"
-                  title="Editar"
-                >
-                  ✎
-                </button>
-                <button
-                  onClick={() => handleDeleteLocation(l.id)}
-                  className="shrink-0 text-zinc-400 hover:text-red-600"
-                  title="Eliminar"
-                >
-                  ✕
-                </button>
+                    {expanded
+                      ? "Ver menos"
+                      : `Ver ${group.locations.length - MAX_VISIBLE_PER_GROUP} sedes más de ${group.label}`}
+                  </button>
+                )}
               </div>
-            </li>
-          ))}
-        </ul>
+            );
+          })}
+        </div>
       )}
 
       {!editing && (
@@ -380,12 +526,28 @@ export default function SedesTab({
           </label>
           <label className="block">
             <span className="mb-1 block font-semibold text-zinc-500">Ciudad</span>
-            <input
-              type="text"
+            <select
               value={editing.city}
               onChange={(e) => setEditing({ ...editing, city: e.target.value })}
               className="w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-sm"
-            />
+            >
+              <option value="">Elige una ciudad...</option>
+              {cities.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-[10px] text-zinc-400">
+              Lista de ciudades registradas. Si no aparece, debe agregarse en la base de datos.
+            </span>
+            {cityChangePreview && (
+              <p className="mt-1 rounded-lg bg-amber-50 p-2 text-[11px] text-amber-700">
+                Al guardar, la cobertura del convenio quedaría: {cityChangePreview.summary || "(sin sedes)"}.
+                {cityChangePreview.stopsIn && ` Dejará de mostrarse en ${cityChangePreview.stopsIn}.`}
+                {" "}Empezará a mostrarse en {cityChangePreview.startsIn}.
+              </p>
+            )}
           </label>
           <label className="block">
             <span className="mb-1 block font-semibold text-zinc-500">Link de Google Maps</span>
@@ -448,7 +610,9 @@ export default function SedesTab({
           <div className="flex gap-2">
             <button
               onClick={handleSaveLocation}
-              disabled={savingLocation || !editing.address.trim() || !editing.mapsUrl.trim()}
+              disabled={
+                savingLocation || !editing.address.trim() || !editing.mapsUrl.trim() || !editing.city
+              }
               className="flex-1 rounded-lg bg-zinc-900 px-3 py-1.5 font-semibold text-white disabled:opacity-50"
             >
               {savingLocation ? "Guardando..." : "Guardar sede"}
