@@ -1,6 +1,8 @@
 import { supabase } from "@/lib/mia/supabaseClient";
 import { extractLatLngFromMapsUrl } from "./mapsUrl";
 import { resolveActiveMerchantId } from "./guards";
+import { parseNit } from "./nit";
+import { getAuditStatusBulk } from "./audit";
 
 export type AdminCityOption = { value: string; label: string };
 export type AdminProgramOption = { id: string; name: string };
@@ -420,13 +422,12 @@ export type UpdateNitResult =
  * un error: son la misma empresa y se devuelve el comercio existente para
  * que el llamador ofrezca la fusion asistida (item N3). */
 export async function updateMerchantNit(merchantId: string, rawNit: string): Promise<UpdateNitResult> {
-  const nit = rawNit.replace(/\D/g, "");
-  if (nit.length < 9 || nit.length > 10) {
-    throw new Error("El NIT debe tener 9 o 10 dígitos.");
-  }
-  if (nit.length === 10 && nit.startsWith("9999999")) {
+  const parsed = parseNit(rawNit);
+  if (!parsed.ok) throw new Error(parsed.error);
+  if (parsed.provisional) {
     throw new Error("Ese NIT está dentro del rango provisional - no es un NIT real.");
   }
+  const nit = parsed.nit;
 
   const { data: existing, error: existingError } = await supabase
     .from("merchants")
@@ -569,6 +570,250 @@ export async function findDuplicateLocationsForMerchant(
   return [...groups.entries()]
     .filter(([, rows]) => rows.length > 1)
     .map(([normalizedAddress, locations]) => ({ normalizedAddress, locations }));
+}
+
+// ============================================================
+// Admin v2.3 - "+ Nuevo Convenio" (item N2): busca por NIT, los 4 casos.
+// ============================================================
+
+export type ConvenioExistingBenefit = {
+  id: string;
+  title: string;
+  status: "pendiente_revision" | "activo" | "inactivo";
+  validUntil: string | null;
+  audited: boolean;
+};
+
+export type ConvenioTemplate = {
+  category: string | null;
+  imageUrl: string | null;
+  companyUrl: string | null;
+  socialMediaUrl: string | null;
+};
+
+export type NitLookupResult =
+  | { kind: "not_found" }
+  | {
+      kind: "found";
+      merchant: MerchantInfo;
+      /** Otros benefactores con los que este comercio ya tiene convenio (distinto del que se esta creando). */
+      otherBenefactors: string[];
+      /** Descuentos que YA tiene con el benefactor del filtro actual (caso 2). */
+      sameBenefactorBenefits: ConvenioExistingBenefit[];
+      /** Datos del descuento mas reciente del comercio (cualquier benefactor), para precargar un descuento nuevo (caso 1). */
+      template: ConvenioTemplate | null;
+    };
+
+/** Busca un comercio vigente por NIT exacto y arma todo lo que necesita el
+ * flujo de "+ Nuevo Convenio" para decidir entre los casos 1 y 2 (caso 3 es
+ * simplemente kind:"not_found" - el llamador ofrece sugerencias por nombre
+ * y la opcion de empresa nueva). */
+export async function lookupMerchantForConvenio(nit: string, programId: string): Promise<NitLookupResult> {
+  const { data: merchant, error } = await supabase
+    .from("merchants")
+    .select("id, name, nit, nit_provisional")
+    .eq("nit", nit)
+    .is("merged_into", null)
+    .maybeSingle();
+  if (error) throw new Error(`No se pudo buscar el NIT: ${error.message}`);
+  if (!merchant) return { kind: "not_found" };
+
+  const { data: benefitRows, error: benefitError } = await supabase
+    .from("benefits")
+    .select("id, title, status, valid_until, source_program_id, category, image_url, company_url, social_media_url, created_at")
+    .eq("merchant_id", merchant.id)
+    .order("created_at", { ascending: false });
+  if (benefitError) throw new Error(`No se pudieron consultar los descuentos del comercio: ${benefitError.message}`);
+
+  const rows = benefitRows ?? [];
+  const programIds = [...new Set(rows.map((r) => r.source_program_id as string))];
+  const { data: programRows } = programIds.length
+    ? await supabase.from("programs").select("id, name").in("id", programIds)
+    : { data: [] as { id: string; name: string }[] };
+  const programNameById = new Map((programRows ?? []).map((p) => [p.id as string, p.name as string]));
+
+  const otherBenefactors = [
+    ...new Set(
+      rows
+        .filter((r) => r.source_program_id !== programId)
+        .map((r) => programNameById.get(r.source_program_id as string) ?? "")
+        .filter(Boolean)
+    ),
+  ];
+
+  const sameBenefactorRows = rows.filter((r) => r.source_program_id === programId);
+  const auditStatusByBenefit = await getAuditStatusBulk(sameBenefactorRows.map((r) => r.id as string));
+  const sameBenefactorBenefits: ConvenioExistingBenefit[] = sameBenefactorRows.map((r) => ({
+    id: r.id as string,
+    title: r.title as string,
+    status: r.status as ConvenioExistingBenefit["status"],
+    validUntil: (r.valid_until as string) ?? null,
+    audited: auditStatusByBenefit.get(r.id as string)?.status === "auditado",
+  }));
+
+  const mostRecent = rows[0] ?? null;
+  const template: ConvenioTemplate | null = mostRecent
+    ? {
+        category: (mostRecent.category as string) ?? null,
+        imageUrl: (mostRecent.image_url as string) ?? null,
+        companyUrl: (mostRecent.company_url as string) ?? null,
+        socialMediaUrl: (mostRecent.social_media_url as string) ?? null,
+      }
+    : null;
+
+  return {
+    kind: "found",
+    merchant: {
+      id: merchant.id as string,
+      name: merchant.name as string,
+      nit: merchant.nit as string,
+      nitProvisional: Boolean(merchant.nit_provisional),
+    },
+    otherBenefactors,
+    sameBenefactorBenefits,
+    template,
+  };
+}
+
+/** Sugerencias por nombre entre comercios vigentes con NIT provisional
+ * (caso 3, antes de crear una empresa nueva) - busqueda libre (no el
+ * prefijo de dos palabras de getSimilarProvisionalMerchants, que es para
+ * sugerir tras una fusion ya hecha). */
+export async function searchProvisionalMerchantsByName(name: string): Promise<MerchantSearchResult[]> {
+  const trimmed = name.trim();
+  if (!trimmed) return [];
+  const { data: merchants, error } = await supabase
+    .from("merchants")
+    .select("id, name, nit, nit_provisional")
+    .is("merged_into", null)
+    .eq("nit_provisional", true)
+    .ilike("name", `%${trimmed}%`)
+    .order("name")
+    .limit(10);
+  if (error) throw new Error(`No se pudieron buscar empresas parecidas: ${error.message}`);
+  if (!merchants || merchants.length === 0) return [];
+
+  const merchantIds = merchants.map((m) => m.id as string);
+  const [{ data: locRows }, { data: benefitRows }] = await Promise.all([
+    supabase.from("benefit_locations").select("merchant_id").in("merchant_id", merchantIds),
+    supabase.from("benefits").select("merchant_id, source_program_id").in("merchant_id", merchantIds),
+  ]);
+  const locCountByMerchant = new Map<string, number>();
+  for (const row of locRows ?? []) {
+    const id = row.merchant_id as string;
+    locCountByMerchant.set(id, (locCountByMerchant.get(id) ?? 0) + 1);
+  }
+  const programIds = [...new Set((benefitRows ?? []).map((r) => r.source_program_id as string))];
+  const { data: programRows } = programIds.length
+    ? await supabase.from("programs").select("id, name").in("id", programIds)
+    : { data: [] as { id: string; name: string }[] };
+  const programNameById = new Map((programRows ?? []).map((p) => [p.id as string, p.name as string]));
+  const benefitCountByMerchant = new Map<string, number>();
+  const benefactorsByMerchant = new Map<string, Set<string>>();
+  for (const row of benefitRows ?? []) {
+    const mId = row.merchant_id as string;
+    benefitCountByMerchant.set(mId, (benefitCountByMerchant.get(mId) ?? 0) + 1);
+    const pName = programNameById.get(row.source_program_id as string) ?? "";
+    if (!benefactorsByMerchant.has(mId)) benefactorsByMerchant.set(mId, new Set());
+    if (pName) benefactorsByMerchant.get(mId)!.add(pName);
+  }
+
+  return merchants.map((m) => ({
+    id: m.id as string,
+    name: m.name as string,
+    nit: m.nit as string,
+    nitProvisional: Boolean(m.nit_provisional),
+    locationCount: locCountByMerchant.get(m.id as string) ?? 0,
+    benefitCount: benefitCountByMerchant.get(m.id as string) ?? 0,
+    benefactors: [...(benefactorsByMerchant.get(m.id as string) ?? [])],
+  }));
+}
+
+export type NewConvenioInput = {
+  /** Ya validado como real (parseNit, !provisional) por el llamador. */
+  nit: string;
+  /** null = crear comercio nuevo con este NIT; si viene, ya existe (casos 1/3-asignado). */
+  merchantId: string | null;
+  /** Solo se usa si merchantId es null. */
+  merchantName: string;
+  programId: string;
+  /** Ciudad del filtro (nombre visible) - cobertura manual inicial, hasta que se vinculen sedes. */
+  cityLabel: string;
+  title: string;
+  category: string;
+  originalSourceUrl: string;
+  status: "pendiente_revision" | "activo" | "inactivo";
+  deliveryMode: "online" | "presencial" | "online_y_presencial" | null;
+  validFrom: string | null;
+  validUntil: string | null;
+  conditions: string | null;
+  accessType: string | null;
+  redemptionInstructions: string | null;
+  imageUrl: string | null;
+  companyUrl: string | null;
+  socialMediaUrl: string | null;
+};
+
+/** Crea el comercio (solo si es nuevo) y el descuento, en ese orden -
+ * nunca deja un comercio huerfano porque el comercio solo se crea aqui,
+ * junto con su primer descuento. Devuelve el id del descuento nuevo, para
+ * que el llamador pase al modo de edicion normal (ya con Sedes habilitada). */
+export type MerchantLocationPreview = { id: string; address: string; city: string | null };
+
+/** Sedes del comercio, sin vinculo a ningun beneficio (no existe todavia) -
+ * solo para el preview de solo lectura de "+ Nuevo Convenio" antes de
+ * guardar (item N2). Evita pasarle a listMerchantLocations un benefitId
+ * que no existe (benefit_location_links.benefit_id es uuid real). */
+export async function listMerchantLocationsPreview(merchantId: string): Promise<MerchantLocationPreview[]> {
+  const { data, error } = await supabase
+    .from("benefit_locations")
+    .select("id, address, city")
+    .eq("merchant_id", merchantId);
+  if (error) throw new Error(`No se pudieron consultar las sedes: ${error.message}`);
+  return (data ?? []).map((l) => ({
+    id: l.id as string,
+    address: l.address as string,
+    city: (l.city as string) ?? null,
+  }));
+}
+
+export async function createConvenio(input: NewConvenioInput): Promise<string> {
+  let merchantId = input.merchantId;
+  if (!merchantId) {
+    const { data: merchant, error } = await supabase
+      .from("merchants")
+      .insert({ name: input.merchantName, nit: input.nit })
+      .select("id")
+      .single();
+    if (error) throw new Error(`No se pudo crear el comercio: ${error.message}`);
+    merchantId = merchant.id as string;
+  }
+
+  const { data: benefit, error: benefitError } = await supabase
+    .from("benefits")
+    .insert({
+      source_program_id: input.programId,
+      merchant_id: merchantId,
+      title: input.title,
+      category: input.category,
+      city: input.cityLabel,
+      status: input.status,
+      delivery_mode: input.deliveryMode,
+      conditions: input.conditions,
+      access_type: input.accessType,
+      redemption_instructions: input.redemptionInstructions,
+      valid_from: input.validFrom,
+      valid_until: input.validUntil,
+      image_url: input.imageUrl,
+      company_url: input.companyUrl,
+      social_media_url: input.socialMediaUrl,
+      original_source_url: input.originalSourceUrl,
+      updated_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  if (benefitError) throw new Error(`No se pudo crear el descuento: ${benefitError.message}`);
+  return benefit.id as string;
 }
 
 export async function createMerchantAndLink(benefitId: string, name: string): Promise<string> {

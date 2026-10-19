@@ -25,6 +25,10 @@ import {
   mergeMerchantsRpc,
   getSimilarProvisionalMerchants,
   findDuplicateLocationsForMerchant,
+  lookupMerchantForConvenio,
+  searchProvisionalMerchantsByName,
+  createConvenio,
+  listMerchantLocationsPreview,
   toggleLocationLink,
   upsertLocation,
   deleteLocation,
@@ -41,6 +45,9 @@ import {
   type UpdateNitResult,
   type MergeResult,
   type DuplicateLocationGroup,
+  type NitLookupResult,
+  type NewConvenioInput,
+  type MerchantLocationPreview,
 } from "@/lib/admin/catalog";
 
 // Guards por accion (Admin v2.3, item S1 - antes todas pedian solo sesion
@@ -208,4 +215,35 @@ export async function findDuplicateLocationsForMerchantAction(
 ): Promise<DuplicateLocationGroup[]> {
   await requireAdminRole();
   return findDuplicateLocationsForMerchant(merchantId);
+}
+
+// ============================================================
+// Admin v2.3 - "+ Nuevo Convenio" (item N2). Solo admin (item N5): el
+// boton del Catalogo no se le ofrece al analista, y el servidor no lo
+// permite aunque lo invoque directo.
+// ============================================================
+
+export async function lookupMerchantForConvenioAction(
+  nit: string,
+  programId: string
+): Promise<NitLookupResult> {
+  await requireAdminRole();
+  return lookupMerchantForConvenio(nit, programId);
+}
+
+export async function searchProvisionalMerchantsByNameAction(name: string): Promise<MerchantSearchResult[]> {
+  await requireAdminRole();
+  return searchProvisionalMerchantsByName(name);
+}
+
+export async function createConvenioAction(input: NewConvenioInput): Promise<string> {
+  await requireAdminRole();
+  return createConvenio(input);
+}
+
+export async function listMerchantLocationsPreviewAction(
+  merchantId: string
+): Promise<MerchantLocationPreview[]> {
+  await requireAdminRole();
+  return listMerchantLocationsPreview(merchantId);
 }

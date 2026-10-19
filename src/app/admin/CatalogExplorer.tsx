@@ -19,6 +19,7 @@ import { getAuditStatusBulkAction, getAuditStatusAction } from "./auditActions";
 import AdminBenefitGrid from "./AdminBenefitGrid";
 import EditPanel from "./EditPanel";
 import { toPreviewMessage } from "./previewMessage";
+import NewConvenioPanel from "./NewConvenioPanel";
 
 // Orden de prioridad de revision (mono-sede primero: mayor riesgo de falso
 // positivo, mas barato de verificar - ver v2.0). Real (benefit_location_links)
@@ -52,6 +53,7 @@ export default function CatalogExplorer({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [gridError, setGridError] = useState<string | null>(null);
+  const [showNewConvenio, setShowNewConvenio] = useState(false);
 
   const categoryOptions = useMemo(() => {
     const set = new Set(benefits.map((b) => firstCategory(b.category)));
@@ -135,6 +137,16 @@ export default function CatalogExplorer({
       .catch(() => {});
   }
 
+  async function handleConvenioCreated(benefitId: string) {
+    setShowNewConvenio(false);
+    const full = await loadBenefitFullAction(benefitId);
+    setSelected(full);
+    setPanelCollapsed(false);
+    setShowPreview(false);
+    // El nuevo descuento debe aparecer en el grid sin recargar la pagina.
+    loadGrid(city, programId);
+  }
+
   function handleSaved(updated: AdminBenefitFull) {
     setSelected(updated);
     setBenefits((prev) =>
@@ -206,6 +218,14 @@ export default function CatalogExplorer({
             </option>
           ))}
         </select>
+        <button
+          onClick={() => setShowNewConvenio(true)}
+          disabled={!city || !programId}
+          title={!city || !programId ? "Elige una ciudad y un benefactor" : undefined}
+          className="rounded-lg bg-zinc-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          + Nuevo Convenio
+        </button>
       </div>
 
       <div className="flex-1 p-4">
@@ -271,6 +291,16 @@ export default function CatalogExplorer({
         <DetailSheet
           message={toPreviewMessage(selected, previewSedes)}
           onClose={() => setShowPreview(false)}
+        />
+      )}
+
+      {showNewConvenio && (
+        <NewConvenioPanel
+          programId={programId}
+          programName={programs.find((p) => p.id === programId)?.name ?? ""}
+          cityLabel={cities.find((c) => c.value === city)?.label ?? city}
+          onClose={() => setShowNewConvenio(false)}
+          onCreated={handleConvenioCreated}
         />
       )}
     </div>
