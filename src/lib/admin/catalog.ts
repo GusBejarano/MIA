@@ -364,6 +364,213 @@ export async function getMerchantInfo(merchantId: string): Promise<MerchantInfo 
   };
 }
 
+export type MerchantMergeSummary = {
+  id: string;
+  name: string;
+  nit: string;
+  nitProvisional: boolean;
+  benefitCount: number;
+  locationCount: number;
+  benefactors: string[];
+};
+
+/** Ficha resumen de un comercio (nombre, NIT, cuantos descuentos/sedes/
+ * benefactores) - usada en el aviso de fusion ("este NIT ya pertenece a
+ * «X» (...)") y en el resultado post-fusion (item N3). */
+export async function getMerchantMergeSummary(merchantId: string): Promise<MerchantMergeSummary | null> {
+  const { data: merchant, error } = await supabase
+    .from("merchants")
+    .select("id, name, nit, nit_provisional")
+    .eq("id", merchantId)
+    .maybeSingle();
+  if (error) throw new Error(`No se pudo consultar el comercio: ${error.message}`);
+  if (!merchant) return null;
+
+  const [{ data: benefitRows, error: benefitError }, { data: locRows, error: locError }] = await Promise.all([
+    supabase.from("benefits").select("source_program_id").eq("merchant_id", merchantId),
+    supabase.from("benefit_locations").select("id").eq("merchant_id", merchantId),
+  ]);
+  if (benefitError) throw new Error(`No se pudieron consultar los descuentos: ${benefitError.message}`);
+  if (locError) throw new Error(`No se pudieron consultar las sedes: ${locError.message}`);
+
+  const programIds = [...new Set((benefitRows ?? []).map((r) => r.source_program_id as string))];
+  const { data: programRows } = programIds.length
+    ? await supabase.from("programs").select("id, name").in("id", programIds)
+    : { data: [] as { id: string; name: string }[] };
+  const programNames = (programRows ?? []).map((p) => p.name as string);
+
+  return {
+    id: merchant.id as string,
+    name: merchant.name as string,
+    nit: merchant.nit as string,
+    nitProvisional: Boolean(merchant.nit_provisional),
+    benefitCount: (benefitRows ?? []).length,
+    locationCount: (locRows ?? []).length,
+    benefactors: programNames,
+  };
+}
+
+export type UpdateNitResult =
+  | { kind: "updated" }
+  | { kind: "conflict"; existingMerchant: MerchantMergeSummary };
+
+/** Valida formato (9-10 digitos) y rango (nunca deja guardar un NIT dentro
+ * del rango provisional 9999999000-9999999999 como "real" - sigue siendo
+ * solo para buscar). Si el NIT ya pertenece a otro comercio vigente, NO es
+ * un error: son la misma empresa y se devuelve el comercio existente para
+ * que el llamador ofrezca la fusion asistida (item N3). */
+export async function updateMerchantNit(merchantId: string, rawNit: string): Promise<UpdateNitResult> {
+  const nit = rawNit.replace(/\D/g, "");
+  if (nit.length < 9 || nit.length > 10) {
+    throw new Error("El NIT debe tener 9 o 10 dígitos.");
+  }
+  if (nit.length === 10 && nit.startsWith("9999999")) {
+    throw new Error("Ese NIT está dentro del rango provisional - no es un NIT real.");
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("merchants")
+    .select("id")
+    .eq("nit", nit)
+    .neq("id", merchantId)
+    .is("merged_into", null)
+    .maybeSingle();
+  if (existingError) throw new Error(`No se pudo verificar el NIT: ${existingError.message}`);
+  if (existing) {
+    const summary = await getMerchantMergeSummary(existing.id as string);
+    if (summary) return { kind: "conflict", existingMerchant: summary };
+  }
+
+  const { error } = await supabase.from("merchants").update({ nit }).eq("id", merchantId);
+  if (error) {
+    // 23505 = unique_violation (condicion de carrera entre el chequeo de
+    // arriba y este update) - mismo tratamiento: ofrecer fusion, no un error.
+    if (error.code === "23505") {
+      const { data: raceExisting } = await supabase
+        .from("merchants")
+        .select("id")
+        .eq("nit", nit)
+        .neq("id", merchantId)
+        .maybeSingle();
+      if (raceExisting) {
+        const summary = await getMerchantMergeSummary(raceExisting.id as string);
+        if (summary) return { kind: "conflict", existingMerchant: summary };
+      }
+    }
+    throw new Error(`No se pudo guardar el NIT: ${error.message}`);
+  }
+  return { kind: "updated" };
+}
+
+export type MergeResult = { benefitsMoved: number; locationsMoved: number };
+
+/** Ejecuta la fusion real - la hace la funcion de base de datos
+ * merge_merchants en una sola transaccion (mueve beneficios y sedes, marca
+ * p_from.merged_into = p_into, nunca borra). Este wrapper NO hace esas
+ * actualizaciones por su cuenta. */
+export async function mergeMerchantsRpc(fromId: string, intoId: string): Promise<MergeResult> {
+  const { data, error } = await supabase.rpc("merge_merchants", { p_from: fromId, p_into: intoId });
+  if (error) throw new Error(`No se pudo fusionar: ${error.message}`);
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { beneficios_movidos?: number; sedes_movidas?: number }
+    | null
+    | undefined;
+  return {
+    benefitsMoved: Number(row?.beneficios_movidos ?? 0),
+    locationsMoved: Number(row?.sedes_movidas ?? 0),
+  };
+}
+
+/** Comercios vigentes con NIT provisional cuyo nombre empieza con las dos
+ * primeras palabras del nombre dado (ej. "Smart Fit" encuentra las 5
+ * variantes "Smart Fit - <Ciudad>") - la lista de "otras empresas con
+ * nombre parecido que siguen separadas" tras una fusion (item N3). */
+export async function getSimilarProvisionalMerchants(
+  name: string,
+  excludeId: string
+): Promise<MerchantSearchResult[]> {
+  const prefix = name.trim().split(/\s+/).slice(0, 2).join(" ");
+  if (!prefix) return [];
+  const { data: merchants, error } = await supabase
+    .from("merchants")
+    .select("id, name, nit, nit_provisional")
+    .is("merged_into", null)
+    .eq("nit_provisional", true)
+    .neq("id", excludeId)
+    .ilike("name", `${prefix}%`)
+    .order("name")
+    .limit(10);
+  if (error) throw new Error(`No se pudieron buscar empresas parecidas: ${error.message}`);
+  if (!merchants || merchants.length === 0) return [];
+
+  const merchantIds = merchants.map((m) => m.id as string);
+  const [{ data: locRows }, { data: benefitRows }] = await Promise.all([
+    supabase.from("benefit_locations").select("merchant_id").in("merchant_id", merchantIds),
+    supabase.from("benefits").select("merchant_id, source_program_id").in("merchant_id", merchantIds),
+  ]);
+  const locCountByMerchant = new Map<string, number>();
+  for (const row of locRows ?? []) {
+    const id = row.merchant_id as string;
+    locCountByMerchant.set(id, (locCountByMerchant.get(id) ?? 0) + 1);
+  }
+  const programIds = [...new Set((benefitRows ?? []).map((r) => r.source_program_id as string))];
+  const { data: programRows } = programIds.length
+    ? await supabase.from("programs").select("id, name").in("id", programIds)
+    : { data: [] as { id: string; name: string }[] };
+  const programNameById = new Map((programRows ?? []).map((p) => [p.id as string, p.name as string]));
+  const benefitCountByMerchant = new Map<string, number>();
+  const benefactorsByMerchant = new Map<string, Set<string>>();
+  for (const row of benefitRows ?? []) {
+    const mId = row.merchant_id as string;
+    benefitCountByMerchant.set(mId, (benefitCountByMerchant.get(mId) ?? 0) + 1);
+    const pName = programNameById.get(row.source_program_id as string) ?? "";
+    if (!benefactorsByMerchant.has(mId)) benefactorsByMerchant.set(mId, new Set());
+    if (pName) benefactorsByMerchant.get(mId)!.add(pName);
+  }
+
+  return merchants.map((m) => ({
+    id: m.id as string,
+    name: m.name as string,
+    nit: m.nit as string,
+    nitProvisional: Boolean(m.nit_provisional),
+    locationCount: locCountByMerchant.get(m.id as string) ?? 0,
+    benefitCount: benefitCountByMerchant.get(m.id as string) ?? 0,
+    benefactors: [...(benefactorsByMerchant.get(m.id as string) ?? [])],
+  }));
+}
+
+export type DuplicateLocationGroup = {
+  normalizedAddress: string;
+  locations: { id: string; address: string; city: string | null }[];
+};
+
+/** Sedes del comercio destino con la misma direccion normalizada - solo
+ * informativo tras una fusion (item N3): nunca se borran ni se fusionan
+ * solas, el admin decide que hacer a mano. */
+export async function findDuplicateLocationsForMerchant(
+  merchantId: string
+): Promise<DuplicateLocationGroup[]> {
+  const { data, error } = await supabase
+    .from("benefit_locations")
+    .select("id, address, city")
+    .eq("merchant_id", merchantId);
+  if (error) throw new Error(`No se pudieron consultar las sedes: ${error.message}`);
+
+  const groups = new Map<string, { id: string; address: string; city: string | null }[]>();
+  for (const row of data ?? []) {
+    const key = normalizeCityForFk(row.address as string);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push({
+      id: row.id as string,
+      address: row.address as string,
+      city: (row.city as string) ?? null,
+    });
+  }
+  return [...groups.entries()]
+    .filter(([, rows]) => rows.length > 1)
+    .map(([normalizedAddress, locations]) => ({ normalizedAddress, locations }));
+}
+
 export async function createMerchantAndLink(benefitId: string, name: string): Promise<string> {
   const { data: merchant, error } = await supabase
     .from("merchants")

@@ -1,11 +1,29 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { AdminBenefitFull, AdminBenefitPatch } from "@/lib/admin/catalog";
+import type {
+  AdminBenefitFull,
+  AdminBenefitPatch,
+  MerchantInfo,
+  MerchantMergeSummary,
+  MerchantSearchResult,
+  DuplicateLocationGroup,
+} from "@/lib/admin/catalog";
 import type { BenefitAuditInfo } from "@/lib/admin/audit";
 import { previewCoverageGate } from "@/lib/admin/coverageGate";
 import { coverageFromCities, coverageSummaryText, coverageSavedText, parseDeclaredCities } from "@/lib/admin/coverage";
-import { saveBenefitAction, getLinkedLocationCitiesAction, listAllCitiesAction } from "./catalogActions";
+import {
+  saveBenefitAction,
+  loadBenefitFullAction,
+  getLinkedLocationCitiesAction,
+  listAllCitiesAction,
+  getMerchantInfoAction,
+  updateMerchantNitAction,
+  mergeMerchantsAction,
+  getMerchantMergeSummaryAction,
+  getSimilarProvisionalMerchantsAction,
+  findDuplicateLocationsForMerchantAction,
+} from "./catalogActions";
 import { getAuditStatusAction, markBenefitAuditedAction } from "./auditActions";
 import SedesTab from "./SedesTab";
 
@@ -76,6 +94,7 @@ export default function EditPanel({
   benefit,
   city,
   taskId,
+  role,
   onSaved,
   onAudited,
 }: {
@@ -85,6 +104,9 @@ export default function EditPanel({
    * v2.1) - queda registrado en benefit_audit_log para saber que auditoria
    * salio de que tarea. */
   taskId?: string;
+  /** Solo admin puede editar el NIT del comercio y fusionar (item N5) - el
+   * analista lo ve de solo lectura. */
+  role: "admin" | "analista";
   onSaved: (updated: AdminBenefitFull) => void;
   onAudited?: () => void;
 }) {
@@ -146,6 +168,118 @@ export default function EditPanel({
   const citiesStarting = calculatedCityCodes.filter((c) => !declaredCities.includes(c));
   const citiesStopping = declaredCities.filter((c) => !calculatedCityCodes.includes(c));
   const savedCityDiffers = hasSedesCoverage && (form.city ?? "").trim() !== calculatedCityText;
+
+  // --- N3: NIT del comercio + fusion asistida ---
+  const [merchantInfo, setMerchantInfo] = useState<MerchantInfo | null>(null);
+  const [editingNit, setEditingNit] = useState(false);
+  const [nitDraft, setNitDraft] = useState("");
+  const [savingNit, setSavingNit] = useState(false);
+  const [nitError, setNitError] = useState<string | null>(null);
+  const [mergeConflict, setMergeConflict] = useState<MerchantMergeSummary | null>(null);
+  const [merging, setMerging] = useState(false);
+  const [mergeResult, setMergeResult] = useState<{
+    into: MerchantMergeSummary;
+    benefitsMoved: number;
+    locationsMoved: number;
+    similar: MerchantSearchResult[];
+    duplicates: DuplicateLocationGroup[];
+  } | null>(null);
+  const [similarMergeConfirm, setSimilarMergeConfirm] = useState<MerchantSearchResult | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const merchantId = benefit.merchant_id;
+    const task = merchantId
+      ? getMerchantInfoAction(merchantId, benefit.id)
+      : Promise.resolve<MerchantInfo | null>(null);
+    task
+      .then((info) => {
+        if (!cancelled) setMerchantInfo(info);
+      })
+      .catch(() => {
+        if (!cancelled) setMerchantInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [benefit.id, benefit.merchant_id]);
+
+  async function performMerge(fromId: string, intoId: string) {
+    const moved = await mergeMerchantsAction(fromId, intoId);
+    const intoSummary = await getMerchantMergeSummaryAction(intoId);
+    if (!intoSummary) return null;
+    const [similar, duplicates] = await Promise.all([
+      getSimilarProvisionalMerchantsAction(intoSummary.name, intoId),
+      findDuplicateLocationsForMerchantAction(intoId),
+    ]);
+    return {
+      into: intoSummary,
+      benefitsMoved: moved.benefitsMoved,
+      locationsMoved: moved.locationsMoved,
+      similar,
+      duplicates,
+    };
+  }
+
+  async function handleSaveNit() {
+    if (!benefit.merchant_id) return;
+    setSavingNit(true);
+    setNitError(null);
+    try {
+      const result = await updateMerchantNitAction(benefit.merchant_id, nitDraft);
+      if (result.kind === "conflict") {
+        setMergeConflict(result.existingMerchant);
+      } else {
+        setEditingNit(false);
+        const info = await getMerchantInfoAction(benefit.merchant_id, benefit.id);
+        setMerchantInfo(info);
+      }
+    } catch (err) {
+      setNitError(err instanceof Error ? err.message : "No se pudo guardar el NIT.");
+    } finally {
+      setSavingNit(false);
+    }
+  }
+
+  async function handleConfirmMainMerge() {
+    if (!benefit.merchant_id || !mergeConflict) return;
+    setMerging(true);
+    setNitError(null);
+    try {
+      const result = await performMerge(benefit.merchant_id, mergeConflict.id);
+      if (result) {
+        setMergeResult(result);
+        setMergeConflict(null);
+        setEditingNit(false);
+        const updated = await loadBenefitFullAction(benefit.id);
+        if (updated) {
+          setForm(toFormState(updated));
+          onSaved(updated);
+        }
+      }
+    } catch (err) {
+      setNitError(err instanceof Error ? err.message : "No se pudo fusionar.");
+    } finally {
+      setMerging(false);
+    }
+  }
+
+  async function handleConfirmSimilarMerge() {
+    if (!mergeResult || !similarMergeConfirm) return;
+    setMerging(true);
+    setNitError(null);
+    try {
+      const result = await performMerge(similarMergeConfirm.id, mergeResult.into.id);
+      if (result) {
+        setMergeResult(result);
+        setSimilarMergeConfirm(null);
+      }
+    } catch (err) {
+      setNitError(err instanceof Error ? err.message : "No se pudo fusionar.");
+    } finally {
+      setMerging(false);
+    }
+  }
 
   // Reacciona en vivo al selector de modo de entrega (sin necesidad de
   // guardar primero) - regla del diseno de la pestaña Sedes.
@@ -280,6 +414,170 @@ export default function EditPanel({
         <SedesTab benefit={benefit} city={city} onBenefitUpdated={onSaved} />
       ) : (
         <>
+
+      {benefit.merchant_id && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 text-xs font-bold uppercase text-zinc-400">Comercio</legend>
+          <div className="rounded-lg border border-zinc-200 p-2">
+            <p className="font-semibold text-zinc-900">{merchantInfo?.name ?? "Cargando..."}</p>
+            {!editingNit ? (
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span className="text-zinc-500">NIT del comercio: {merchantInfo?.nit ?? "..."}</span>
+                {merchantInfo && (
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                      merchantInfo.nitProvisional
+                        ? "bg-amber-100 text-amber-700"
+                        : "bg-emerald-100 text-emerald-700"
+                    }`}
+                  >
+                    {merchantInfo.nitProvisional ? "Provisional" : "Real"}
+                  </span>
+                )}
+                {role === "admin" && merchantInfo && (
+                  <button
+                    onClick={() => {
+                      setNitDraft(merchantInfo.nit);
+                      setEditingNit(true);
+                      setNitError(null);
+                    }}
+                    className="font-semibold text-mia-cyan hover:underline"
+                  >
+                    Editar NIT
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="mt-1 flex gap-2">
+                <input
+                  type="text"
+                  value={nitDraft}
+                  onChange={(e) => setNitDraft(e.target.value)}
+                  placeholder="NIT real (9-10 dígitos)"
+                  className="w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-sm"
+                />
+                <button
+                  onClick={handleSaveNit}
+                  disabled={savingNit}
+                  className="shrink-0 rounded-lg bg-zinc-900 px-3 py-1.5 font-semibold text-white disabled:opacity-50"
+                >
+                  {savingNit ? "Guardando..." : "Guardar"}
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingNit(false);
+                    setNitError(null);
+                  }}
+                  className="shrink-0 rounded-lg border border-zinc-300 px-3 py-1.5 font-semibold text-zinc-600 hover:bg-zinc-50"
+                >
+                  Cancelar
+                </button>
+              </div>
+            )}
+            {nitError && <p className="mt-1 rounded-lg bg-red-50 p-2 text-red-700">{nitError}</p>}
+          </div>
+
+          {mergeConflict && merchantInfo && (
+            <div className="rounded-lg bg-amber-50 p-2 text-amber-700">
+              <p>
+                Este NIT ya pertenece a «{mergeConflict.name}» (
+                {mergeConflict.benefactors.join(", ") || "sin benefactores"} ·{" "}
+                {mergeConflict.benefitCount} descuentos · {mergeConflict.locationCount} sedes). Si «
+                {merchantInfo.name}» es la misma empresa, se fusionan.
+              </p>
+              <p className="mt-1">
+                Se moverá a «{mergeConflict.name}»: los descuentos y sedes de «{merchantInfo.name}».
+                «{merchantInfo.name}» queda marcada como fusionada: no se borra y deja de aparecer en
+                las búsquedas. Revisa luego si quedan sedes duplicadas (misma dirección).
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={handleConfirmMainMerge}
+                  disabled={merging}
+                  className="rounded-lg bg-zinc-900 px-3 py-1.5 font-semibold text-white disabled:opacity-50"
+                >
+                  {merging ? "Fusionando..." : "Fusionar"}
+                </button>
+                <button
+                  onClick={() => setMergeConflict(null)}
+                  className="rounded-lg border border-zinc-300 px-3 py-1.5 font-semibold text-zinc-600 hover:bg-zinc-50"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {mergeResult && (
+            <div className="rounded-lg bg-emerald-50 p-2 text-emerald-700">
+              <p>
+                Fusión completa: se movieron {mergeResult.benefitsMoved} descuentos y{" "}
+                {mergeResult.locationsMoved} sedes a «{mergeResult.into.name}».
+              </p>
+              {mergeResult.duplicates.length > 0 && (
+                <div className="mt-2 text-amber-700">
+                  <p className="font-semibold">
+                    Sedes con la misma dirección en «{mergeResult.into.name}» (revisar a mano, no se
+                    tocaron):
+                  </p>
+                  <ul className="mt-1 list-disc pl-4">
+                    {mergeResult.duplicates.map((g) => (
+                      <li key={g.normalizedAddress}>
+                        {g.locations.map((l) => l.address).join(" / ")}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {mergeResult.similar.length > 0 && (
+                <div className="mt-2">
+                  <p className="font-semibold">Otras empresas con nombre parecido que siguen separadas:</p>
+                  <ul className="mt-1 flex flex-col gap-1">
+                    {mergeResult.similar.map((m) => (
+                      <li key={m.id} className="flex items-center justify-between gap-2">
+                        <span>
+                          {m.name} · NIT {m.nit} · {m.benefitCount} descuentos · {m.locationCount} sedes
+                        </span>
+                        <button
+                          onClick={() => setSimilarMergeConfirm(m)}
+                          className="shrink-0 rounded-lg border border-zinc-300 px-2 py-1 font-semibold text-zinc-700 hover:bg-white"
+                        >
+                          Fusionar
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {similarMergeConfirm && mergeResult && (
+            <div className="rounded-lg bg-amber-50 p-2 text-amber-700">
+              <p>
+                Se moverá a «{mergeResult.into.name}»: {similarMergeConfirm.benefitCount} descuentos y{" "}
+                {similarMergeConfirm.locationCount} sedes de «{similarMergeConfirm.name}». «
+                {similarMergeConfirm.name}» queda marcada como fusionada: no se borra.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={handleConfirmSimilarMerge}
+                  disabled={merging}
+                  className="rounded-lg bg-zinc-900 px-3 py-1.5 font-semibold text-white disabled:opacity-50"
+                >
+                  {merging ? "Fusionando..." : "Fusionar"}
+                </button>
+                <button
+                  onClick={() => setSimilarMergeConfirm(null)}
+                  className="rounded-lg border border-zinc-300 px-3 py-1.5 font-semibold text-zinc-600 hover:bg-zinc-50"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+        </fieldset>
+      )}
 
       <fieldset className="flex flex-col gap-2">
         <legend className="mb-1 text-xs font-bold uppercase text-zinc-400">Básico</legend>

@@ -260,6 +260,7 @@ export default function CatalogExplorer({
             key={selected.id}
             benefit={selected}
             city={city}
+            role="admin"
             onSaved={handleSaved}
             onAudited={() => handleAudited(selected.id)}
           />

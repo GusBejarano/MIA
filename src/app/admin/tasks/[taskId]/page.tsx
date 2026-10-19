@@ -20,5 +20,5 @@ export default async function TaskDetailPage({
   }
   if (!detail) redirect("/admin/tasks");
 
-  return <TaskDetailView taskId={taskId} initialDetail={detail} />;
+  return <TaskDetailView taskId={taskId} initialDetail={detail} role={currentUser.role} />;
 }

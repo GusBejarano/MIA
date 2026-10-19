@@ -20,6 +20,11 @@ import {
   listMerchantLocations,
   getLinkedLocationCities,
   getMerchantInfo,
+  getMerchantMergeSummary,
+  updateMerchantNit,
+  mergeMerchantsRpc,
+  getSimilarProvisionalMerchants,
+  findDuplicateLocationsForMerchant,
   toggleLocationLink,
   upsertLocation,
   deleteLocation,
@@ -32,6 +37,10 @@ import {
   type MerchantLocation,
   type LocationInput,
   type MerchantInfo,
+  type MerchantMergeSummary,
+  type UpdateNitResult,
+  type MergeResult,
+  type DuplicateLocationGroup,
 } from "@/lib/admin/catalog";
 
 // Guards por accion (Admin v2.3, item S1 - antes todas pedian solo sesion
@@ -161,4 +170,42 @@ export async function resolveMapsUrlLatLngAction(
 ): Promise<{ lat: number | null; lng: number | null }> {
   await requireAnyTaskAccess();
   return resolveMapsUrlLatLng(url);
+}
+
+// ============================================================
+// Admin v2.3 - NIT del comercio y fusion asistida (item N3). Todas estas
+// acciones son solo admin (item N5): el analista ve el NIT porque viene con
+// getBenefitFull/getMerchantInfo, pero no puede editarlo ni fusionar.
+// ============================================================
+
+export async function updateMerchantNitAction(merchantId: string, nit: string): Promise<UpdateNitResult> {
+  await requireAdminRole();
+  return updateMerchantNit(merchantId, nit);
+}
+
+export async function mergeMerchantsAction(fromId: string, intoId: string): Promise<MergeResult> {
+  await requireAdminRole();
+  return mergeMerchantsRpc(fromId, intoId);
+}
+
+export async function getMerchantMergeSummaryAction(
+  merchantId: string
+): Promise<MerchantMergeSummary | null> {
+  await requireAdminRole();
+  return getMerchantMergeSummary(merchantId);
+}
+
+export async function getSimilarProvisionalMerchantsAction(
+  name: string,
+  excludeId: string
+): Promise<MerchantSearchResult[]> {
+  await requireAdminRole();
+  return getSimilarProvisionalMerchants(name, excludeId);
+}
+
+export async function findDuplicateLocationsForMerchantAction(
+  merchantId: string
+): Promise<DuplicateLocationGroup[]> {
+  await requireAdminRole();
+  return findDuplicateLocationsForMerchant(merchantId);
 }

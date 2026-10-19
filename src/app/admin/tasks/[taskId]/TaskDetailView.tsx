@@ -27,9 +27,11 @@ const AUDIT_FILTER_OPTIONS: { value: AuditFilter; label: string }[] = [
 export default function TaskDetailView({
   taskId,
   initialDetail,
+  role,
 }: {
   taskId: string;
   initialDetail: TaskDetail;
+  role: "admin" | "analista";
 }) {
   const [detail, setDetail] = useState(initialDetail);
   const [selected, setSelected] = useState<AdminBenefitFull | null>(null);
@@ -166,6 +168,7 @@ export default function TaskDetailView({
             benefit={selected}
             city={detail.city}
             taskId={taskId}
+            role={role}
             onSaved={handleSaved}
             onAudited={refreshDetail}
           />
