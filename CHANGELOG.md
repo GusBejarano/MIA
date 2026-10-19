@@ -2,7 +2,7 @@
 
 Versionado propio del panel `/admin` (`src/lib/admin/version.ts`), separado del de la app pública (`package.json`). No existe un release 2.2.0: lo que se había planeado para él quedó dentro de 2.3.0.
 
-## [2.3.0] — sin publicar (en `dev`, pendiente de Fase 6: lanzamiento)
+## [2.3.0] — sin publicar (en `dev`, pendiente de promoción a `main`)
 
 Reconstruido desde `git log` (commits `ecb9cd4..HEAD` en `dev`, en el orden en que se hicieron):
 
@@ -21,8 +21,9 @@ Reconstruido desde `git log` (commits `ecb9cd4..HEAD` en `dev`, en el orden en q
 - **N2** (`11b8788`) — botón **"+ Nuevo Convenio"** en el Catálogo (solo admin), con el NIT primero y los 4 casos documentados en `docs/ADMIN.md`.
 - **N5** — permisos de todo lo anterior (verificado junto con cada ítem, sin commit propio).
 - **Versión** (`ec58ba6`) — `ADMIN_VERSION = "2.3.0"` como fuente propia; header `Admin v2.3.0 · <hash>`.
+- **Base de datos** — ejecutado directamente en producción por Gustavo (sin archivo de migración en el repo, ver "Esquema de Supabase" en el README): trigger que mantiene `benefits.city` calculado desde las sedes vinculadas, y llave foránea `benefit_locations.city → city_regions.city`. El recálculo se aplicó a los 11 convenios que ya tenían sedes — ej. "La Sevillana · USB Cali" pasó de `"Cali, Palmira, Jamundí, Candelaria, Yumbo"` (declarado a mano) a `"Cali, Jamundí, Yumbo"` (solo las ciudades con sede real).
 
-**Pendiente dentro de esta misma versión:** documentación (`docs/ADMIN.md`, este changelog, README), tags locales, las dos migraciones SQL de Fase 6 (trigger de cobertura desde sedes, llave foránea de ciudad) y el lanzamiento con visto bueno — ver el informe de estado entregado a Gustavo.
+**Pendiente dentro de esta misma versión:** tag `admin-v2.3.0` (se crea al promover a `main`) y la promoción misma, con autorización explícita de Gustavo.
 
 ## [2.1.0] — `102eb0d` (2026-08-01, en `main`)
 
