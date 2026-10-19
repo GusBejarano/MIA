@@ -278,7 +278,13 @@ Corridas contra Supabase de Dev real, vía las funciones RPC directamente (SQL E
 
 ## Panel de administración (Admin)
 
-`/admin` es un producto completo aparte de la app pública de MIA (sin nav ni layout compartidos), para el equipo interno que carga y audita el catálogo. Versión propia (`src/lib/admin/version.ts`, hoy **2.3.0** — ver `docs/ADMIN.md` para el detalle completo de módulos, modelo de datos y vocabulario).
+`/admin` es un producto completo aparte de la app pública de MIA (sin nav ni layout compartidos), para el equipo interno que carga y audita el catálogo. Versión propia (`src/lib/admin/version.ts`, hoy **2.3.0**).
+
+**Documentación del admin:**
+- [`docs/ADMIN.md`](docs/ADMIN.md) — documento vivo: módulos construidos, matriz de permisos, modelo de datos, vocabulario del dominio, decisiones tomadas, backlog.
+- [`docs/BD-CAMBIOS.md`](docs/BD-CAMBIOS.md) — registro cronológico de cambios de base de datos (incluidos los ejecutados directo en Supabase, sin archivo de migración).
+- [`docs/VERSIONING.md`](docs/VERSIONING.md) — política de versionamiento, convención de tags, checklist de lanzamiento.
+- `version/` — notas de cada versión publicada (`AAAA.MM.DD - Admin X.Y.Z - Notas de version.md`); la más reciente es [`version/2026.10.18 - Admin 2.3.0 - Notas de version.md`](version/2026.10.18%20-%20Admin%202.3.0%20-%20Notas%20de%20version.md).
 
 **Rutas principales:**
 - `/admin` — Catálogo (Ciudad → Benefactor → Categoría → grid), solo rol `admin`.
