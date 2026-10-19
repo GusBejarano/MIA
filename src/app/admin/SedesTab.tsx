@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { AdminBenefitFull, AdminCityOption, MerchantSearchResult, MerchantLocation } from "@/lib/admin/catalog";
+import type {
+  AdminBenefitFull,
+  AdminCityOption,
+  MerchantSearchResult,
+  MerchantLocation,
+  MerchantInfo,
+} from "@/lib/admin/catalog";
 import { extractLatLngFromMapsUrl } from "@/lib/admin/mapsUrl";
 import { coverageFromCities, coverageSummaryText } from "@/lib/admin/coverage";
 import {
@@ -12,6 +18,7 @@ import {
   createSedeFromLegacyAction,
   listMerchantLocationsAction,
   listAllCitiesAction,
+  getMerchantInfoAction,
   toggleLocationLinkAction,
   upsertLocationAction,
   deleteLocationAction,
@@ -68,6 +75,7 @@ export default function SedesTab({
   const [cities, setCities] = useState<AdminCityOption[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [coverageNotice, setCoverageNotice] = useState<string | null>(null);
+  const [merchantInfo, setMerchantInfo] = useState<MerchantInfo | null>(null);
 
   const [editing, setEditing] = useState<LocationFormState | null>(null);
   const [savingLocation, setSavingLocation] = useState(false);
@@ -88,7 +96,6 @@ export default function SedesTab({
   }, []);
 
   useEffect(() => {
-    if (!benefit.merchant_id) return;
     let cancelled = false;
     const merchantId = benefit.merchant_id;
 
@@ -96,8 +103,18 @@ export default function SedesTab({
       setLoadingLocations(true);
       setLocationsError(null);
       try {
-        const rows = await listMerchantLocationsAction(merchantId, benefit.id);
-        if (!cancelled) setLocations(rows);
+        if (!merchantId) {
+          if (!cancelled) setMerchantInfo(null);
+          return;
+        }
+        const [rows, info] = await Promise.all([
+          listMerchantLocationsAction(merchantId, benefit.id),
+          getMerchantInfoAction(merchantId, benefit.id),
+        ]);
+        if (!cancelled) {
+          setLocations(rows);
+          setMerchantInfo(info);
+        }
       } catch (err) {
         if (!cancelled) {
           setLocationsError(err instanceof Error ? err.message : "No se pudieron cargar las sedes.");
@@ -189,11 +206,15 @@ export default function SedesTab({
 
   async function handleUseLegacy() {
     setLinkError(null);
+    setLocationsError(null);
     try {
       await createSedeFromLegacyAction(benefit.id);
       await refreshBenefit();
+      if (benefit.merchant_id) await refreshLocations(benefit.merchant_id);
     } catch (err) {
-      setLinkError(err instanceof Error ? err.message : "No se pudo migrar la sede legacy.");
+      const message = err instanceof Error ? err.message : "No se pudo migrar la sede legacy.";
+      if (benefit.merchant_id) setLocationsError(message);
+      else setLinkError(message);
     }
   }
 
@@ -395,8 +416,26 @@ export default function SedesTab({
     };
   })();
 
+  const canUseLegacy = !loadingLocations && locations.length === 0 && hasLegacyData;
+
   return (
     <div className="flex flex-col gap-3 p-4 text-xs">
+      <div className="flex items-center justify-between rounded-lg bg-zinc-900 px-3 py-2 text-white">
+        <span className="font-semibold">Comercio: {merchantInfo?.name ?? "..."}</span>
+        {merchantInfo && (
+          <span className="flex items-center gap-1.5">
+            NIT {merchantInfo.nit}
+            <span
+              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                merchantInfo.nitProvisional ? "bg-amber-400 text-amber-950" : "bg-emerald-400 text-emerald-950"
+              }`}
+            >
+              {merchantInfo.nitProvisional ? "Provisional" : "Real"}
+            </span>
+          </span>
+        )}
+      </div>
+
       {locationsError && <p className="rounded-lg bg-red-50 p-2 text-red-700">{locationsError}</p>}
       {coverageNotice && (
         <p className="rounded-lg bg-sky-50 p-2 text-sky-700">{coverageNotice}</p>
@@ -410,6 +449,15 @@ export default function SedesTab({
             : "Sin sedes vinculadas todavía."}
         </p>
       </div>
+
+      {canUseLegacy && (
+        <button
+          onClick={handleUseLegacy}
+          className="rounded-lg border border-zinc-300 px-3 py-2 text-center font-semibold text-zinc-600 hover:bg-zinc-50"
+        >
+          Usar dirección/link actuales como primera sede
+        </button>
+      )}
 
       {loadingLocations && <p className="text-zinc-400">Cargando sedes...</p>}
 

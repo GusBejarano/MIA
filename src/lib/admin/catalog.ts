@@ -342,6 +342,28 @@ export async function searchMerchants(query: string): Promise<MerchantSearchResu
   }));
 }
 
+export type MerchantInfo = { id: string; name: string; nit: string; nitProvisional: boolean };
+
+/** Datos de comercio para el encabezado "Comercio: <nombre> · NIT <nit>"
+ * (item N4) y el bloque "Comercio" de la pestaña Datos (item N3) - sigue
+ * merged_into si hiciera falta, igual que getBenefitFull. */
+export async function getMerchantInfo(merchantId: string): Promise<MerchantInfo | null> {
+  const resolvedId = await resolveActiveMerchantId(merchantId);
+  const { data, error } = await supabase
+    .from("merchants")
+    .select("id, name, nit, nit_provisional")
+    .eq("id", resolvedId)
+    .maybeSingle();
+  if (error) throw new Error(`No se pudo consultar el comercio: ${error.message}`);
+  if (!data) return null;
+  return {
+    id: data.id as string,
+    name: data.name as string,
+    nit: data.nit as string,
+    nitProvisional: Boolean(data.nit_provisional),
+  };
+}
+
 export async function createMerchantAndLink(benefitId: string, name: string): Promise<string> {
   const { data: merchant, error } = await supabase
     .from("merchants")
@@ -366,9 +388,21 @@ export async function linkExistingMerchant(benefitId: string, merchantId: string
   if (error) throw new Error(`No se pudo vincular el comercio: ${error.message}`);
 }
 
-/** Migracion asistida (regla D.10): usa benefits.address/how_to_get_there
- * (legacy) como primera sede propuesta - crea el comercio si hace falta,
- * la sede, y el vinculo, todo en un solo paso que el admin confirmo antes. */
+function normalizeCityForFk(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+/** Migracion asistida (regla D.10, ajustada en N4): usa
+ * benefits.address/how_to_get_there (legacy) como primera sede propuesta
+ * del comercio YA vinculado (todo beneficio tiene merchant_id desde el
+ * 2026-10-16 - ya no crea comercio). Normaliza la ciudad contra
+ * city_regions (lower+unaccent+trim) y, si no hay match, NO crea la sede:
+ * la llave foranea de benefit_locations.city (Fase 6, PARTE 2) la
+ * rechazaria si se insertara sin normalizar. */
 export async function createSedeFromLegacy(benefitId: string): Promise<void> {
   const { data: benefit, error } = await supabase
     .from("benefits")
@@ -384,13 +418,27 @@ export async function createSedeFromLegacy(benefitId: string): Promise<void> {
     (benefit.merchant_id as string | null) ??
     (await createMerchantAndLink(benefitId, benefit.title as string));
 
+  const rawCity = (benefit.city as string)?.split(",")[0]?.trim() ?? "";
+  const normalizedCity = normalizeCityForFk(rawCity);
+  const { data: cityRow, error: cityError } = await supabase
+    .from("city_regions")
+    .select("city")
+    .eq("city", normalizedCity)
+    .maybeSingle();
+  if (cityError) throw new Error(`No se pudo verificar la ciudad: ${cityError.message}`);
+  if (!cityRow) {
+    throw new Error(
+      `La ciudad "${rawCity || benefit.city || "(sin ciudad)"}" no está en la lista de ciudades. Agrégala a la base de datos antes de continuar.`
+    );
+  }
+
   const { lat, lng } = extractLatLngFromMapsUrl(benefit.how_to_get_there as string);
   const { data: location, error: locError } = await supabase
     .from("benefit_locations")
     .insert({
       merchant_id: merchantId,
       address: benefit.address,
-      city: (benefit.city as string)?.split(",")[0]?.trim() ?? null,
+      city: normalizedCity,
       maps_url: benefit.how_to_get_there,
       lat,
       lng,

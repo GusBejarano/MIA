@@ -19,6 +19,7 @@ import {
   createSedeFromLegacy,
   listMerchantLocations,
   getLinkedLocationCities,
+  getMerchantInfo,
   toggleLocationLink,
   upsertLocation,
   deleteLocation,
@@ -30,6 +31,7 @@ import {
   type MerchantSearchResult,
   type MerchantLocation,
   type LocationInput,
+  type MerchantInfo,
 } from "@/lib/admin/catalog";
 
 // Guards por accion (Admin v2.3, item S1 - antes todas pedian solo sesion
@@ -113,6 +115,16 @@ export async function listMerchantLocationsAction(
 export async function getLinkedLocationCitiesAction(benefitId: string): Promise<string[]> {
   await requireBenefitAccess(benefitId);
   return getLinkedLocationCities(benefitId);
+}
+
+/** Nombre/NIT del comercio vinculado - encabezado "Comercio · NIT" de la
+ * pestaña Sedes (N4) y el bloque "Comercio" de Datos (N3). */
+export async function getMerchantInfoAction(
+  merchantId: string,
+  benefitId: string
+): Promise<MerchantInfo | null> {
+  await requireBenefitAccess(benefitId);
+  return getMerchantInfo(merchantId);
 }
 
 /** Todas las ciudades de city_regions (desplegable del formulario de sede,
