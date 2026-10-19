@@ -2,7 +2,7 @@
 
 Frontend y motor conversacional de MIA para [descuentosinteligentes.com](https://descuentosinteligentes.com), construido con Next.js (App Router) y desplegado en Netlify.
 
-Versión actual: **2.0.0** (modelo de cobertura geográfica por sede — `delivery_mode`/`coverage_confidence`/`benefit_locations`, ubicación persistente del usuario, panel de administración `/admin` con auth + 2FA y catálogo Ciudad→Benefactor→edición en vivo — Fase 3 de sedes en el panel admin, pendiente de diseño de UX).
+**App pública** (`package.json`, header del chat): **2.5.0**. **Panel admin** (`/admin`, versión propia desde v2.3 — ver `src/lib/admin/version.ts`): **2.3.0**. Son dos números independientes: comparten un solo build/deploy (mismo repo, mismo commit), pero evolucionan y se versionan por separado — ver "Panel de administración (Admin)" más abajo.
 
 ## Stack
 
@@ -14,6 +14,7 @@ Versión actual: **2.0.0** (modelo de cobertura geográfica por sede — `delive
 ## Estructura
 
 ```
+middleware.ts                  -> protege /admin/** (matcher), exige sesion + 2FA (aal2) - no cubre la app publica
 src/
   app/
     page.tsx                    -> monta <MiaChat />
@@ -21,6 +22,12 @@ src/
     api/mia/route.ts             -> POST: arranca/continúa una conversación (OnboardingSession)
     api/mia/rating/route.ts      -> POST: guarda/borra una calificación de 1-3 estrellas (fuera del flujo de turnos de chat)
     api/mia/declare-relation/route.ts -> POST: declara relación activa con un benefactor desde el detalle (buscador de negocio), fuera del flujo de turnos de chat
+    admin/                       -> panel /admin completo (ver "Panel de administración (Admin)" abajo) - producto aparte, sin nav compartido con la app publica
+      layout.tsx                 -> header con logo/ADMIN/VERSION_LABEL (Admin vX.Y.Z, no el de la app), rol, logout
+      login/, mfa/enroll/, auth/callback/, auth/confirm/, set-password/ -> login en 2 pasos (password -> TOTP) + flujos de invitacion/recuperacion
+      CatalogExplorer.tsx, AdminBenefitGrid.tsx, EditPanel.tsx, SedesTab.tsx, NewConvenioPanel.tsx -> Catalogo (Ciudad->Benefactor->Categoria->grid), panel Datos/Sedes, "+ Nuevo Convenio"
+      tasks/, pagos/, users/     -> sistema de tareas (cola del analista), reporte de pago por tarea, gestion de usuarios
+      *Actions.ts                -> Server Actions del admin, todas detras de los guards de src/lib/admin/guards.ts
   components/
     MiaChat.tsx                  -> UI completa del chat: fase phone-gate, render de mensajes/enlaces/tooltips, geolocalización, sessionStorage/localStorage, rotación del placeholder del input
     InstallPrompt.tsx            -> banner de "agregar a inicio" (Android: prompt nativo; iOS: instrucciones, Safari no tiene esa API) - montado en layout.tsx, no en MiaChat
@@ -53,6 +60,11 @@ src/
       detectCityChange.ts               -> Haiku: detecta si un mensaje libre indica cambio de ciudad (se combina con matchFromText para confirmar contra cobertura real)
       findBusinessInConditions.ts        -> Haiku: Capa 2 del buscador de negocio, busca menciones de un negocio dentro de `conditions` (caso "paraguas")
       parseProfileAnswer.ts               -> interpreta la respuesta libre a un campo de perfil pendiente (gender/birth_date vía Haiku, name trivial) - null si no trae un valor usable
+  lib/admin/                    -> lógica de servidor del panel admin (ver "Panel de administración (Admin)" abajo)
+    access.ts, guards.ts        -> reglas de autorizacion por rol/beneficio (puras + cableado a Supabase) y su ensamblado real
+    catalog.ts, tasks.ts, audit.ts, payments.ts -> consultas/escrituras de catalogo+comercio+sedes, tareas, auditoria, reporte de pago
+    coverage.ts, coverageGate.ts, mapsUrl.ts, nit.ts -> modulos puros (sin imports) compartidos entre server y cliente
+    version.ts                  -> ADMIN_VERSION, fuente de la version del admin (distinta de package.json)
 scripts/
   mia-cli.ts                      -> simulador de conversación por terminal, sin depender del navegador (`npm run chat`)
 supabase/
@@ -263,9 +275,35 @@ Corridas contra Supabase de Dev real, vía las funciones RPC directamente (SQL E
 - **`discovery.ts` migrado a RPC** — `getAvailableBenefactors`/`getAvailableCities`/`getAvailableCategories`/`getBenefitsForCategory` probados end-to-end contra datos reales (Cali: 3 benefactores reales con conteos correctos; categorías y beneficios de Comfenalco en Cali coinciden con los datos de Supabase).
 - **Tiempos de respuesta** — medido con `MIA_DEBUG_TIMING=true`: usuario que regresa con nombre ya guardado, 7363ms → 943ms; sin nombre guardado, 7363ms → 1880ms. Verificado también que el saludo personalizado usa el nombre real cuando existe.
 
+## Panel de administración (Admin)
+
+`/admin` es un producto completo aparte de la app pública de MIA (sin nav ni layout compartidos), para el equipo interno que carga y audita el catálogo. Versión propia (`src/lib/admin/version.ts`, hoy **2.3.0** — ver `docs/ADMIN.md` para el detalle completo de módulos, modelo de datos y vocabulario).
+
+**Rutas principales:**
+- `/admin` — Catálogo (Ciudad → Benefactor → Categoría → grid), solo rol `admin`.
+- `/admin/tasks` / `/admin/tasks/[taskId]` — cola de tareas del analista (`admin` ve todas agrupadas por analista; `analista` solo las suyas, y es su página de inicio).
+- `/admin/pagos` — reporte de pago por analista (una fila por tarea, con rango de fechas), solo `admin`.
+- `/admin/users` — gestión de usuarios (invitar, rol, activar/desactivar), solo `admin`.
+- `/admin/login`, `/admin/mfa/enroll`, `/admin/auth/callback`, `/admin/auth/confirm`, `/admin/set-password` — login en 2 pasos (contraseña + TOTP) y flujos de invitación por correo.
+
+**Roles — `admin` vs `analista`:** el analista solo ve y puede operar sobre los beneficios de las tareas que tiene asignadas (`admin_task_benefits` de una `admin_tasks.assigned_to = su id`, en cualquier estado de tarea); el admin tiene acceso a todo. La UI oculta lo que no corresponde (`AdminNav.tsx`, redirects en cada `page.tsx`), pero **el control real vive en los Server Actions** (`src/lib/admin/guards.ts`: `requireAdminRole`, `requireBenefitAccess`, `requireMerchantAccess`, `requireLocationAccess`, `requireAnyTaskAccess`) — la UI es solo conveniencia, nunca el límite de seguridad.
+
+**Por qué no hay `CREATE POLICY` (RLS sin policies, a propósito):** todo el admin usa la `service_role` key de Supabase desde Server Actions, que ignora RLS siempre. RLS está activo en varias tablas (herencia del esquema base) pero sin una sola policy versionada — el control admin/analista no podría vivir ahí sin reescribir todo el acceso a datos con la key publicable. Es una decisión consciente: la seguridad real vive en el código de servidor, no en Postgres. Riesgo aceptado explícitamente: un error en un `requireX()` no tiene una segunda red.
+
+**Variables de entorno propias del admin** (además de las compartidas con la app pública, ver tabla arriba):
+
+| Variable | Uso |
+|---|---|
+| `SUPABASE_PUBLISHABLE_KEY` | Key de Supabase Auth (respeta RLS) usada solo en el login/2FA del admin, vía `@supabase/ssr` — nunca para leer/escribir datos de catálogo (eso sigue siendo `service_role`) |
+| `ADMIN_INVITE_REDIRECT_URL` | A dónde redirige el link de invitación por correo tras poner contraseña. Opcional — si se deja vacío usa el dominio de producción por defecto, para no mandar invitaciones de dev al entorno equivocado |
+
+**`dev` y producción usan la misma base de datos de Supabase** (un único proyecto, no hay entorno de desarrollo aparte) — cualquier prueba manual con escritura en `dev` escribe sobre datos reales. Esto aplica igual de fuerte al admin que a la app pública.
+
+**Flujo de despliegue del admin:** se desarrolla y se prueba en `dev` primero (mismo repo/build que la app pública); con autorización explícita, el mismo commit se promueve a `main` (producción). Cualquier migración SQL nueva de `supabase/` corre a mano en el SQL Editor antes de promover, en el mismo orden en que aparece el archivo (ver "Esquema de Supabase" y `docs/ADMIN.md`).
+
 ## Deploy
 
-El proyecto incluye `netlify.toml` con `@netlify/plugin-nextjs`. Configura las variables de entorno (`ANTHROPIC_API_KEY`, `MIA_MODEL_SONNET`, `MIA_MODEL_HAIKU`, `BEDI_HASH_SALT`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) en el dashboard de Netlify (Site settings → Environment variables) antes del primer deploy.
+El proyecto incluye `netlify.toml` con `@netlify/plugin-nextjs`. Configura las variables de entorno (`ANTHROPIC_API_KEY`, `MIA_MODEL_SONNET`, `MIA_MODEL_HAIKU`, `BEDI_HASH_SALT`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_PUBLISHABLE_KEY`, `ADMIN_INVITE_REDIRECT_URL`) en el dashboard de Netlify (Site settings → Environment variables) antes del primer deploy.
 
 - `main` → producción.
 - `dev` → entorno de desarrollo (el pie de página del chat muestra el prefijo `dev-` fuera de `main`).
