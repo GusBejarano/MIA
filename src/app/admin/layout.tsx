@@ -1,15 +1,18 @@
 import Image from "next/image";
 import { getCurrentAdminUser } from "@/lib/admin/currentAdminUser";
+import { ADMIN_VERSION } from "@/lib/admin/version";
 import { logoutAction } from "./actions";
 import AdminNav from "./AdminNav";
 
-// Mismo mecanismo de metadatos de build que MiaChat.tsx (ver next.config.ts)
-// - se repite aqui en vez de importarlo porque ese archivo es "use client"
-// y este layout es un Server Component.
-const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0";
+// Hash de build y prefijo de entorno siguen viniendo del mismo mecanismo
+// que MiaChat.tsx (ver next.config.ts) - se repite aqui en vez de
+// importarlo porque ese archivo es "use client" y este layout es un Server
+// Component. El numero de version, en cambio, es el del admin
+// (src/lib/admin/version.ts), no el de package.json/NEXT_PUBLIC_APP_VERSION
+// (que es el de la app publica, 2.5.0 hoy - item "Versionamiento" de v2.3).
 const BUILD_HASH = process.env.NEXT_PUBLIC_BUILD_HASH ?? "local";
 const ENV_PREFIX = process.env.NEXT_PUBLIC_ENV_PREFIX ?? "dev-";
-const VERSION_LABEL = `v${APP_VERSION} · ${ENV_PREFIX}${BUILD_HASH}`;
+const VERSION_LABEL = `Admin v${ADMIN_VERSION} · ${ENV_PREFIX}${BUILD_HASH}`;
 
 // Layout propio de /admin, sin nav/menu compartido con la app publica de
 // MIA (regla de negocio: /admin es un producto completamente aparte) -
